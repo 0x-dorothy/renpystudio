@@ -1,0 +1,161 @@
+﻿{
+  "formatVersion": 1,
+  "meta": {
+    "title": "Тестовая новелла",
+    "author": "RenPy Studio",
+    "description": "Сквозной тест генератора",
+    "renpyVersion": "Ren'Py 8.5.3.26051504",
+    "gameSlug": "test-novella",
+    "startScene": "sc_prologue",
+    "defaultLocale": "ru",
+    "createdAt": "2026-11-09T18:00:00Z",
+    "updatedAt": "2026-11-09T18:00:00Z"
+  },
+  "locales": ["ru", "en"],
+  "characters": [
+    {
+      "id": "ch_mira",
+      "name": "Мира",
+      "kind": "character",
+      "color": "#e96aa5",
+      "avatar": null,
+      "spritePrefix": "mira",
+      "voiceTag": "mira",
+      "prefix": null,
+      "suffix": null,
+      "notes": "Главная героиня"
+    },
+    {
+      "id": "ch_thought",
+      "name": "Мысли Миры",
+      "kind": "thought",
+      "color": "#b9a7ff",
+      "avatar": null,
+      "spritePrefix": "mira",
+      "voiceTag": null,
+      "prefix": null,
+      "suffix": null,
+      "notes": ""
+    },
+    {
+      "id": "ch_narr",
+      "name": "Рассказчик",
+      "kind": "narrator",
+      "color": null,
+      "avatar": null,
+      "spritePrefix": null,
+      "voiceTag": null,
+      "prefix": null,
+      "suffix": null,
+      "notes": ""
+    }
+  ],
+  "variables": [
+    {
+      "id": "v_trust",
+      "name": "trust",
+      "varType": "number",
+      "default": 0,
+      "description": "Доверие Миры"
+    },
+    {
+      "id": "v_metkey",
+      "name": "saw_key",
+      "varType": "bool",
+      "default": false,
+      "description": "Видел ключ"
+    },
+    {
+      "id": "v_name",
+      "name": "hero_name",
+      "varType": "text",
+      "default": "Странник",
+      "description": "Имя героя"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sc_prologue",
+      "title": "Пролог",
+      "slug": "prologue",
+      "summary": "Знакомство",
+      "color": "#8b6cf2",
+      "nodes": [
+        { "id": "n_scene", "kind": "scene", "params": { "bg": "images/bg/room.png", "transition": "dissolve", "duration": null }, "source": "studio", "locked": false },
+        { "id": "n_comment", "kind": "comment", "params": { "text": { "ru": "Здесь начинается история", "en": "The story begins here" }, "internalOnly": false }, "source": "studio", "locked": false },
+        { "id": "n_narr", "kind": "narrate", "params": { "text": { "ru": "Комната пахла старыми книгами.", "en": "The room smelled of old books." } }, "source": "studio", "locked": false },
+        { "id": "n_show", "kind": "show", "params": { "who": "ch_mira", "image": "happy", "asset": "images/sprites/mira_happy.png", "position": "left", "customX": null, "transition": "dissolve", "flip": false }, "source": "studio", "locked": false },
+        { "id": "n_say1", "kind": "say", "params": { "who": "ch_mira", "text": { "ru": "Это начало…", "en": "This is the beginning…" }, "image": "happy", "voice": "audio/voice/mira_001.opus", "cps": 40 }, "source": "studio", "locked": false },
+        { "id": "n_thought", "kind": "say", "params": { "who": "ch_thought", "text": { "ru": "Она волнуется.", "en": "She is nervous." }, "image": null, "voice": null, "cps": null }, "source": "studio", "locked": false },
+        { "id": "n_pose", "kind": "pose", "params": { "who": "ch_mira", "image": "sad", "asset": "images/sprites/mira_sad.png", "transition": "dissolve" }, "source": "studio", "locked": false },
+        { "id": "n_anim", "kind": "anim", "params": { "who": "ch_mira", "preset": "shake" }, "source": "studio", "locked": false },
+        { "id": "n_music", "kind": "music", "params": { "action": "play", "file": "audio/theme.opus", "fadeout": 1.0, "loop": true, "channel": null }, "source": "studio", "locked": false },
+        { "id": "n_set", "kind": "set", "params": { "variable": "trust", "op": "add", "value": 1 }, "source": "studio", "locked": false },
+        { "id": "n_pause", "kind": "pause", "params": { "seconds": 0.5, "hard": false }, "source": "studio", "locked": false },
+        { "id": "n_menu", "kind": "menu", "params": { "prompt": { "ru": "Открыть дверь?", "en": "Open the door?" }, "withCaption": true, "options": [
+          { "id": "o1", "text": { "ru": "Открыть дверь", "en": "Open the door" }, "condition": null, "target": "sc_door", "setVars": [{ "variable": "trust", "op": "add", "value": 1 }] },
+          { "id": "o2", "text": { "ru": "Уйти", "en": "Leave" }, "condition": "trust > 0", "target": "sc_street", "setVars": [] }
+        ] }, "source": "studio", "locked": false }
+      ]
+    },
+    {
+      "id": "sc_door",
+      "title": "Дверь",
+      "slug": "door",
+      "summary": "",
+      "color": null,
+      "nodes": [
+        { "id": "n_door_say", "kind": "say", "params": { "who": "ch_mira", "text": { "ru": "Тут ключ!", "en": "A key!" }, "image": null, "voice": null, "cps": null }, "source": "studio", "locked": false },
+        { "id": "n_door_set", "kind": "set", "params": { "variable": "saw_key", "op": "set", "value": true }, "source": "studio", "locked": false },
+        { "id": "n_door_if", "kind": "if", "params": { "mode": "builder", "variable": "trust", "op": "gte", "value": 2, "expression": "", "thenTarget": "sc_ending", "elseTarget": "sc_street", "hasElse": true }, "source": "studio", "locked": false }
+      ]
+    },
+    {
+      "id": "sc_street",
+      "title": "Улица",
+      "slug": "street",
+      "summary": "",
+      "color": null,
+      "nodes": [
+        { "id": "n_street_bg", "kind": "scene", "params": { "bg": "images/bg/street.png", "transition": "fade", "duration": 0.8 }, "source": "studio", "locked": false },
+        { "id": "n_street_hide", "kind": "hide", "params": { "who": "ch_mira", "image": null, "transition": "dissolve" }, "source": "studio", "locked": false },
+        { "id": "n_street_code", "kind": "code", "params": { "code": "$ renpy.notify(\"Глава 1 завершена\")", "language": "renpy" }, "source": "studio", "locked": false },
+        { "id": "n_street_label", "kind": "label", "params": { "name": "street_end" }, "source": "studio", "locked": false },
+        { "id": "n_street_say", "kind": "say", "params": { "who": null, "text": { "ru": "Ветер стих.", "en": "The wind died down." }, "image": null, "voice": null, "cps": null }, "source": "studio", "locked": false },
+        { "id": "n_street_jump", "kind": "jump", "params": { "target": "sc_ending", "transition": "fade" }, "source": "studio", "locked": false }
+      ]
+    },
+    {
+      "id": "sc_ending",
+      "title": "Финал",
+      "slug": "ending",
+      "summary": "",
+      "color": null,
+      "nodes": [
+        { "id": "n_end_say", "kind": "say", "params": { "who": "ch_mira", "text": { "ru": "Конец.", "en": "The end." }, "image": "happy", "voice": null, "cps": null }, "source": "studio", "locked": false },
+        { "id": "n_end_sound", "kind": "sound", "params": { "file": "audio/click.opus", "loop": false, "volume": null }, "source": "studio", "locked": false },
+        { "id": "n_end_return", "kind": "return", "params": { "toMainMenu": true }, "source": "studio", "locked": false }
+      ]
+    }
+  ],
+  "initScript": "transform studio_test_pulse:\n    ease 0.5 zoom 1.02\n    ease 0.5 zoom 1.0",
+  "ui": {
+    "mainMenu": {
+      "template": "aurora",
+      "background": "images/bg/menu.png",
+      "logo": null,
+      "title": { "ru": "Тестовая новелла", "en": "Test Novel" },
+      "tagline": { "ru": "Сквозной тест", "en": "End-to-end test" },
+      "music": "audio/menu.opus",
+      "accent": "#8b6cf2",
+      "textColor": "#f5f3ff",
+      "showStart": true,
+      "showLoad": true,
+      "showPreferences": true,
+      "showAbout": true,
+      "showQuit": true,
+      "buttonAlign": "center"
+    },
+    "screens": []
+  }
+}

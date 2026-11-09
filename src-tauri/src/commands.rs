@@ -1,0 +1,1441 @@
+//! Tauri IPC commands. Every project mutation goes through here (the frontend
+//! never edits the model directly), and the same functions back the MCP server.
+
+#[allow(unused_imports)]
+use crate::assets::{self, AssetInfo};
+use crate::diff::{self, DiffEntry};
+use crate::exporter::{self, ExportReport};
+use crate::generator::GenOptions;
+use crate::model::*;
+use crate::sdk::{BuildReport, LintReport, SdkInfo, SdkService};
+use crate::settings::{RecentProject, Settings};
+use crate::store::{SnapshotInfo, Store, StoreStatus};
+use crate::validation::{self, GraphData, ValidationReport};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, State};
+
+pub struct AppState {
+    pub store: Mutex<Store>,
+    pub settings: Mutex<Settings>,
+    pub sdk: SdkService,
+    pub app: AppHandle,
+    pub watcher: Mutex<Option<crate::watcher::ProjectWatcher>>,
+    pub mcp: Mutex<Option<crate::mcp::McpHandle>>,
+    pub last_export: Mutex<Option<ExportReport>>,
+}
+
+pub type Shared = Arc<AppState>;
+
+impl AppState {
+    pub fn new(app: AppHandle) -> Shared {
+        let settings = Settings::load();
+        Arc::new(AppState {
+            store: Mutex::new(Store::default()),
+            settings: Mutex::new(settings),
+            sdk: SdkService::default(),
+            app,
+            watcher: Mutex::new(None),
+            mcp: Mutex::new(None),
+            last_export: Mutex::new(None),
+        })
+    }
+
+    pub fn root(&self) -> Option<PathBuf> {
+        self.store.lock().ok().and_then(|s| s.root.clone())
+    }
+
+    pub fn sdk_info(&self) -> Option<SdkInfo> {
+        let settings = self.settings.lock().ok()?;
+        let root = self.root();
+        self.sdk
+            .detect(settings.sdk_path.as_deref(), root.as_deref(), false)
+    }
+
+    pub fn emit_project_changed(&self, reason: &str) {
+        let payload = json!({ "reason": reason, "at": crate::model::now_iso() });
+        let _ = self.app.emit("studio://project-changed", payload);
+    }
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StateEnvelope {
+    pub project: Project,
+    pub status: StoreStatus,
+    pub issues: ValidationReport,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Bootstrap {
+    pub settings: Settings,
+    pub sdk: Option<SdkInfo>,
+    pub project: Option<StateEnvelope>,
+    pub recent: Vec<RecentProject>,
+    pub version: String,
+    pub mcp_running: bool,
+    pub mcp_port: Option<u16>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MappedProblem {
+    pub file: String,
+    pub line: u32,
+    pub message: String,
+    pub severity: String,
+    pub node_id: Option<String>,
+    pub scene_id: Option<String>,
+    pub scene_title: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LintPayload {
+    pub report: LintReport,
+    pub mapped: Vec<MappedProblem>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RunResult {
+    pub ok: bool,
+    pub message: String,
+    pub pid: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPayload {
+    pub project: Option<Project>,
+    pub report: crate::importer::ImportReport,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn lock_store(state: &AppState) -> Result<std::sync::MutexGuard<'_, Store>, String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "Внутренняя ошибка: модель проекта заблокирована".to_string())
+}
+
+pub fn envelope_of(store: &Store) -> StateEnvelope {
+    let project = store.project.clone();
+    let assets = store
+        .root
+        .as_deref()
+        .map(assets::scan)
+        .unwrap_or_default();
+    let issues = validation::validate(&project, &assets);
+    StateEnvelope {
+        project,
+        status: store.status(),
+        issues,
+    }
+}
+
+fn envelope(state: &AppState) -> Result<StateEnvelope, String> {
+    let store = lock_store(state)?;
+    Ok(envelope_of(&store))
+}
+
+fn default_locale_text(project: &Project, value: &str) -> LocalizedText {
+    let mut map = LocalizedText::new();
+    for locale in &project.locales {
+        map.insert(locale.clone(), value.to_string());
+    }
+    if map.is_empty() {
+        map.insert(project.meta.default_locale.clone(), value.to_string());
+    }
+    map
+}
+
+/// Sensible starting parameters for each block kind.
+pub fn default_params(project: &Project, kind: &str) -> Value {
+    match kind {
+        NodeKind::SAY => {
+            let who = project
+                .characters
+                .iter()
+                .find(|c| c.kind == CharacterKind::Character)
+                .map(|c| c.id.clone());
+            json!({
+                "who": who,
+                "text": default_locale_text(project, ""),
+                "image": null,
+                "voice": null,
+                "cps": null
+            })
+        }
+        NodeKind::NARRATE => json!({ "text": default_locale_text(project, "") }),
+        NodeKind::COMMENT => json!({ "text": default_locale_text(project, ""), "internalOnly": false }),
+        NodeKind::SCENE => json!({ "bg": "", "transition": "dissolve", "duration": null }),
+        NodeKind::SHOW => json!({
+            "who": project.characters.first().map(|c| c.id.clone()).unwrap_or_default(),
+            "image": "",
+            "asset": null,
+            "position": "center",
+            "customX": null,
+            "transition": "dissolve",
+            "flip": false
+        }),
+        NodeKind::HIDE => json!({ "who": project.characters.first().map(|c| c.id.clone()), "image": null, "transition": "dissolve" }),
+        NodeKind::POSE => json!({
+            "who": project.characters.first().map(|c| c.id.clone()).unwrap_or_default(),
+            "image": "",
+            "asset": null,
+            "transition": "dissolve"
+        }),
+        NodeKind::ANIM => json!({ "who": project.characters.first().map(|c| c.id.clone()).unwrap_or_default(), "preset": "shake" }),
+        NodeKind::MENU => json!({
+            "prompt": default_locale_text(project, ""),
+            "options": [
+                { "id": new_id(), "text": default_locale_text(project, "Вариант 1"), "condition": null, "target": null, "setVars": [] },
+                { "id": new_id(), "text": default_locale_text(project, "Вариант 2"), "condition": null, "target": null, "setVars": [] }
+            ],
+            "withCaption": true
+        }),
+        NodeKind::JUMP => json!({ "target": null, "transition": null }),
+        NodeKind::RETURN => json!({ "toMainMenu": false }),
+        NodeKind::IF => json!({
+            "mode": "builder",
+            "variable": project.variables.first().map(|v| v.name.clone()),
+            "op": "gte",
+            "value": 1,
+            "expression": "",
+            "thenTarget": null,
+            "elseTarget": null,
+            "hasElse": false
+        }),
+        NodeKind::PAUSE => json!({ "seconds": 0.0, "hard": false }),
+        NodeKind::LABEL => json!({ "name": "" }),
+        NodeKind::MUSIC => json!({ "action": "play", "file": null, "fadeout": 0.0, "loop": true, "channel": null }),
+        NodeKind::SOUND => json!({ "file": "", "loop": false, "volume": null }),
+        NodeKind::SET => json!({
+            "variable": project.variables.first().map(|v| v.name.clone()).unwrap_or_default(),
+            "op": "set",
+            "value": 0
+        }),
+        NodeKind::CALL_SCREEN => json!({ "screen": "", "withNone": true }),
+        NodeKind::HIDE_SCREEN => json!({ "screen": "" }),
+        NodeKind::CODE => json!({ "code": "", "language": "renpy" }),
+        _ => json!({}),
+    }
+}
+
+/// Rebuilds validation + notifies the UI after an MCP-style mutation.
+fn finish_mutation(state: &AppState, reason: &str) -> Result<StateEnvelope, String> {
+    let env = envelope(state)?;
+    state.emit_project_changed(reason);
+    Ok(env)
+}
+
+fn regenerate(state: &AppState, force: bool) -> Result<ExportReport, String> {
+    let (root, project, locale) = {
+        let store = lock_store(state)?;
+        let root = store.root.clone().ok_or("Проект не открыт")?;
+        (
+            root,
+            store.project.clone(),
+            store.project.meta.default_locale.clone(),
+        )
+    };
+    let opts = GenOptions {
+        locale: if locale.is_empty() { "ru".into() } else { locale },
+        force,
+    };
+    crate::watcher::suppress_for(2500);
+    let (mut report, _, _) = exporter::export(&project, &root, &opts)?;
+    crate::sdk::write_project_settings(
+        &root,
+        state
+            .settings
+            .lock()
+            .ok()
+            .and_then(|s| s.sdk_path.clone())
+            .as_deref(),
+    )
+    .ok();
+    if !report.conflicts.is_empty() {
+        report
+            .warnings
+            .push("Часть файлов не перезаписана: они изменены снаружи.".into());
+    }
+    if let Ok(mut last) = state.last_export.lock() {
+        *last = Some(report.clone());
+    }
+    Ok(report)
+}
+
+fn open_root(state: &AppState, root: &Path) -> Result<StateEnvelope, String> {
+    let mut store = Store::open(root)?;
+    let env = envelope_of(&store);
+    store.clear_history();
+    {
+        let mut guard = lock_store(state)?;
+        *guard = store;
+    }
+    // Restart the file watcher for the new project.
+    if let Ok(mut watcher) = state.watcher.lock() {
+        *watcher = None;
+        match crate::watcher::start(root.to_path_buf(), state.app.clone()) {
+            Ok(w) => *watcher = Some(w),
+            Err(err) => eprintln!("watcher: {err}"),
+        }
+    }
+    {
+        if let Ok(mut settings) = state.settings.lock() {
+            settings.remember_project(&root.display().to_string(), &env.project.meta.title);
+            let _ = settings.save();
+        }
+    }
+    state.emit_project_changed("opened");
+    Ok(env)
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap & settings
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn app_bootstrap(state: State<'_, Shared>) -> Result<Bootstrap, String> {
+    let settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    let sdk = state.sdk_info();
+    let project = {
+        let store = lock_store(&state)?;
+        if store.is_open() {
+            Some(envelope_of(&store))
+        } else {
+            None
+        }
+    };
+    let (mcp_running, mcp_port) = state
+        .mcp
+        .lock()
+        .map(|g| match g.as_ref() {
+            Some(h) => (true, Some(h.port)),
+            None => (false, None),
+        })
+        .unwrap_or((false, None));
+    Ok(Bootstrap {
+        recent: settings.recent_projects.clone(),
+        settings,
+        sdk,
+        project,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        mcp_running,
+        mcp_port,
+    })
+}
+
+#[tauri::command]
+pub fn settings_save(state: State<'_, Shared>, settings: Settings) -> Result<Settings, String> {
+    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    *guard = settings;
+    guard.save()?;
+    state.sdk.invalidate();
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+pub fn sdk_detect(state: State<'_, Shared>, force: Option<bool>) -> Option<SdkInfo> {
+    let preferred = state
+        .settings
+        .lock()
+        .ok()
+        .and_then(|s| s.sdk_path.clone());
+    let root = state.root();
+    state
+        .sdk
+        .detect(preferred.as_deref(), root.as_deref(), force.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn sdk_set_path(state: State<'_, Shared>, path: Option<String>) -> Option<SdkInfo> {
+    if let Ok(mut settings) = state.settings.lock() {
+        settings.sdk_path = path.clone();
+        let _ = settings.save();
+    }
+    state.sdk.invalidate();
+    let root = state.root();
+    let info = state.sdk.detect(path.as_deref(), root.as_deref(), true);
+    if let (Some(root), Some(info)) = (root, info.as_ref()) {
+        let _ = crate::sdk::write_project_settings(&root, Some(&info.root));
+    }
+    info
+}
+
+// ---------------------------------------------------------------------------
+// Project lifecycle
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn project_new(
+    state: State<'_, Shared>,
+    parent: String,
+    title: String,
+) -> Result<StateEnvelope, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("Введите название новеллы".into());
+    }
+    let slug = slugify(&title);
+    let parent_path = PathBuf::from(parent);
+    let mut target = parent_path.join(&title);
+    if target.exists() {
+        let mut n = 2;
+        loop {
+            let candidate = parent_path.join(format!("{title} {n}"));
+            if !candidate.exists() {
+                target = candidate;
+                break;
+            }
+            n += 1;
+            if n > 200 {
+                return Err("Не удалось подобрать имя папки проекта".into());
+            }
+        }
+    }
+    let sdk_root = state.sdk_info().map(|s| PathBuf::from(s.root));
+    crate::templates::scaffold(&target, sdk_root.as_deref(), &title, &slug)?;
+    let mut store = Store::create(&target, &title)?;
+    store.project.meta.renpy_version = state
+        .sdk_info()
+        .map(|s| s.version)
+        .unwrap_or_else(|| "8.x".into());
+    let _ = store.save();
+    let env = envelope_of(&store);
+    {
+        let mut guard = lock_store(&state)?;
+        *guard = store;
+    }
+    // First export so `game/` is immediately runnable.
+    let _ = regenerate(&state, true);
+    open_root(&state, &target)?;
+    state.emit_project_changed("created");
+    Ok(env)
+}
+
+#[tauri::command]
+pub fn project_open(state: State<'_, Shared>, path: String) -> Result<StateEnvelope, String> {
+    let path = PathBuf::from(&path);
+    let root = if path.join("renpy-studio").join("project.json").is_file() {
+        path
+    } else if path.is_file() {
+        path.parent()
+            .map(|p| p.to_path_buf())
+            .ok_or("Не удалось определить папку проекта")?
+    } else {
+        path
+    };
+    if !root.join("renpy-studio").join("project.json").is_file() {
+        return Err(format!(
+            "В папке нет проекта RenPy Studio ({}).",
+            root.join("renpy-studio/project.json").display()
+        ));
+    }
+    open_root(&state, &root)
+}
+
+#[tauri::command]
+pub fn project_create_in_existing(
+    state: State<'_, Shared>,
+    path: String,
+    title: String,
+) -> Result<StateEnvelope, String> {
+    let root = PathBuf::from(path);
+    let sdk_root = state.sdk_info().map(|s| PathBuf::from(s.root));
+    let slug = slugify(&title);
+    crate::templates::scaffold(&root, sdk_root.as_deref(), &title, &slug)?;
+    let store = Store::create(&root, &title)?;
+    {
+        let mut guard = lock_store(&state)?;
+        *guard = store;
+    }
+    let _ = regenerate(&state, true);
+    open_root(&state, &root)
+}
+
+#[tauri::command]
+pub fn project_state(state: State<'_, Shared>) -> Result<Option<StateEnvelope>, String> {
+    let store = lock_store(&state)?;
+    if store.is_open() {
+        Ok(Some(envelope_of(&store)))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub fn project_close(state: State<'_, Shared>) -> Result<(), String> {
+    if let Ok(mut watcher) = state.watcher.lock() {
+        *watcher = None;
+    }
+    let mut store = lock_store(&state)?;
+    *store = Store::default();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn project_save(state: State<'_, Shared>) -> Result<StoreStatus, String> {
+    let mut store = lock_store(&state)?;
+    if !store.is_open() {
+        return Err("Проект не открыт".into());
+    }
+    store.save()?;
+    let status = store.status();
+    drop(store);
+    let _ = state
+        .app
+        .emit("studio://saved", json!({ "at": crate::model::now_iso() }));
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn project_reload(state: State<'_, Shared>) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        if !store.is_open() {
+            return Err("Проект не открыт".into());
+        }
+        store.reload()?;
+    }
+    state.emit_project_changed("reloaded");
+    envelope(&state)
+}
+
+#[tauri::command]
+pub fn project_export(
+    state: State<'_, Shared>,
+    force: Option<bool>,
+) -> Result<ExportReport, String> {
+    {
+        let mut store = lock_store(&state)?;
+        if !store.is_open() {
+            return Err("Проект не открыт".into());
+        }
+        if store.dirty {
+            store.save()?;
+        }
+    }
+    let report = regenerate(&state, force.unwrap_or(false))?;
+    let _ = state
+        .app
+        .emit("studio://exported", json!({ "written": report.written.len() }));
+    Ok(report)
+}
+
+#[tauri::command]
+pub fn project_validate(state: State<'_, Shared>) -> Result<ValidationReport, String> {
+    let store = lock_store(&state)?;
+    let assets = store.root.as_deref().map(assets::scan).unwrap_or_default();
+    Ok(validation::validate(&store.project, &assets))
+}
+
+#[tauri::command]
+pub fn project_graph(state: State<'_, Shared>) -> Result<GraphData, String> {
+    let store = lock_store(&state)?;
+    Ok(validation::graph_data(&store.project))
+}
+
+#[tauri::command]
+pub fn assets_list(state: State<'_, Shared>) -> Result<Vec<AssetInfo>, String> {
+    let store = lock_store(&state)?;
+    Ok(store.root.as_deref().map(assets::scan).unwrap_or_default())
+}
+
+// ---------------------------------------------------------------------------
+// Undo / redo
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn undo(state: State<'_, Shared>) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        if !store.undo() {
+            return Err("Нечего отменять".into());
+        }
+    }
+    envelope(&state)
+}
+
+#[tauri::command]
+pub fn redo(state: State<'_, Shared>) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        if !store.redo() {
+            return Err("Нечего повторять".into());
+        }
+    }
+    envelope(&state)
+}
+
+// ---------------------------------------------------------------------------
+// Scenes
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn scene_create(
+    state: State<'_, Shared>,
+    title: String,
+    index: Option<usize>,
+) -> Result<StateEnvelope, String> {
+    let title = title.trim().to_string();
+    let title = if title.is_empty() {
+        "Новая сцена".to_string()
+    } else {
+        title
+    };
+    {
+        let mut store = lock_store(&state)?;
+        if !store.is_open() {
+            return Err("Проект не открыт".into());
+        }
+        store.checkpoint();
+        let scene = Scene {
+            id: new_id(),
+            title: title.clone(),
+            slug: slugify(&title),
+            summary: String::new(),
+            label_name: None,
+            color: None,
+            nodes: Vec::new(),
+        };
+        let pos = index.unwrap_or(store.project.scenes.len()).min(store.project.scenes.len());
+        store.project.scenes.insert(pos, scene.clone());
+        if store.project.meta.start_scene.is_none() {
+            store.project.meta.start_scene = Some(scene.id.clone());
+        }
+    }
+    finish_mutation(&state, "scene-created")
+}
+
+#[tauri::command]
+pub fn scene_update(
+    state: State<'_, Shared>,
+    scene_id: String,
+    title: Option<String>,
+    summary: Option<String>,
+    color: Option<String>,
+    slug_value: Option<String>,
+    label_name: Option<String>,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        let scene = store
+            .project
+            .scenes
+            .iter_mut()
+            .find(|s| s.id == scene_id)
+            .ok_or("Сцена не найдена")?;
+        if let Some(title) = title {
+            scene.title = title;
+            if scene.slug.trim().is_empty() {
+                scene.slug = slugify(&scene.title);
+            }
+        }
+        if let Some(summary) = summary {
+            scene.summary = summary;
+        }
+        if let Some(color) = color {
+            scene.color = if color.trim().is_empty() { None } else { Some(color) };
+        }
+        if let Some(slug_value) = slug_value {
+            scene.slug = slugify(&slug_value);
+        }
+        if let Some(label_name) = label_name {
+            let cleaned = label_name.trim().to_string();
+            scene.label_name = if cleaned.is_empty() {
+                None
+            } else {
+                Some(crate::model::slugify(&cleaned))
+            };
+        }
+    }
+    finish_mutation(&state, "scene-updated")
+}
+
+#[tauri::command]
+pub fn scene_delete(state: State<'_, Shared>, scene_id: String) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        let before = store.project.scenes.len();
+        store.project.scenes.retain(|s| s.id != scene_id);
+        if store.project.scenes.len() == before {
+            return Err("Сцена не найдена".into());
+        }
+        if store.project.meta.start_scene.as_deref() == Some(scene_id.as_str()) {
+            store.project.meta.start_scene = store.project.scenes.first().map(|s| s.id.clone());
+        }
+        // Clear dangling references so the project stays valid.
+        for scene in &mut store.project.scenes {
+            for node in &mut scene.nodes {
+                match node.kind.as_str() {
+                    NodeKind::JUMP => {
+                        let mut p: JumpParams = node.typed();
+                        if p.target.as_deref() == Some(scene_id.as_str()) {
+                            p.target = None;
+                            node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                        }
+                    }
+                    NodeKind::MENU => {
+                        let mut p: MenuParams = node.typed();
+                        let mut changed = false;
+                        for opt in &mut p.options {
+                            if opt.target.as_deref() == Some(scene_id.as_str()) {
+                                opt.target = None;
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                        }
+                    }
+                    NodeKind::IF => {
+                        let mut p: IfParams = node.typed();
+                        let mut changed = false;
+                        if p.then_target.as_deref() == Some(scene_id.as_str()) {
+                            p.then_target = None;
+                            changed = true;
+                        }
+                        if p.else_target.as_deref() == Some(scene_id.as_str()) {
+                            p.else_target = None;
+                            changed = true;
+                        }
+                        if changed {
+                            node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    finish_mutation(&state, "scene-deleted")
+}
+
+#[tauri::command]
+pub fn scene_duplicate(state: State<'_, Shared>, scene_id: String) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        let index = store
+            .project
+            .scenes
+            .iter()
+            .position(|s| s.id == scene_id)
+            .ok_or("Сцена не найдена")?;
+        let mut copy = store.project.scenes[index].clone();
+        copy.id = new_id();
+        copy.label_name = None;
+        copy.title = format!("{} (копия)", copy.title);
+        copy.slug = slugify(&copy.title);
+        for node in &mut copy.nodes {
+            node.id = new_id();
+        }
+        store.project.scenes.insert(index + 1, copy);
+    }
+    finish_mutation(&state, "scene-duplicated")
+}
+
+#[tauri::command]
+pub fn scene_reorder(
+    state: State<'_, Shared>,
+    scene_id: String,
+    to_index: usize,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        let from = store
+            .project
+            .scenes
+            .iter()
+            .position(|s| s.id == scene_id)
+            .ok_or("Сцена не найдена")?;
+        if from != to_index {
+            store.checkpoint();
+            let scene = store.project.scenes.remove(from);
+            let pos = to_index.min(store.project.scenes.len());
+            store.project.scenes.insert(pos, scene);
+        }
+    }
+    finish_mutation(&state, "scene-reordered")
+}
+
+#[tauri::command]
+pub fn scene_set_start(state: State<'_, Shared>, scene_id: String) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        store.project.meta.start_scene = Some(scene_id);
+    }
+    finish_mutation(&state, "start-scene")
+}
+
+// ---------------------------------------------------------------------------
+// Blocks
+// ---------------------------------------------------------------------------
+
+fn with_scene_mut<T>(
+    store: &mut Store,
+    scene_id: &str,
+    f: impl FnOnce(&mut Scene) -> Result<T, String>,
+) -> Result<T, String> {
+    let scene = store
+        .project
+        .scenes
+        .iter_mut()
+        .find(|s| s.id == scene_id)
+        .ok_or("Сцена не найдена")?;
+    f(scene)
+}
+
+#[tauri::command]
+pub fn node_add(
+    state: State<'_, Shared>,
+    scene_id: String,
+    kind: String,
+    index: Option<usize>,
+    params: Option<Value>,
+    source: Option<NodeSource>,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        if !NodeKind::ALL.contains(&kind.as_str()) {
+            return Err(format!("Неизвестный тип блока: {kind}"));
+        }
+        let params = params.unwrap_or_else(|| default_params(&store.project, &kind));
+        store.checkpoint();
+        let node = Node {
+            id: new_id(),
+            kind: kind.clone(),
+            params,
+            source: source.unwrap_or(NodeSource::Studio),
+            locked: false,
+        };
+        let node_id = node.id.clone();
+        with_scene_mut(&mut store, &scene_id, |scene| {
+            let pos = index.unwrap_or(scene.nodes.len()).min(scene.nodes.len());
+            scene.nodes.insert(pos, node);
+            Ok(())
+        })?;
+        let _ = node_id;
+    }
+    finish_mutation(&state, "node-added")
+}
+
+#[tauri::command]
+pub fn node_update(
+    state: State<'_, Shared>,
+    scene_id: String,
+    node_id: String,
+    params: Value,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        with_scene_mut(&mut store, &scene_id, |scene| {
+            let node = scene
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == node_id)
+                .ok_or("Блок не найден")?;
+            if node.locked {
+                return Err("Импортированный блок защищён от правки".into());
+            }
+            node.params = params;
+            Ok(())
+        })?;
+    }
+    finish_mutation(&state, "node-updated")
+}
+
+#[tauri::command]
+pub fn node_delete(
+    state: State<'_, Shared>,
+    scene_id: String,
+    node_id: String,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        with_scene_mut(&mut store, &scene_id, |scene| {
+            let before = scene.nodes.len();
+            scene.nodes.retain(|n| n.id != node_id);
+            if scene.nodes.len() == before {
+                return Err("Блок не найден".into());
+            }
+            Ok(())
+        })?;
+    }
+    finish_mutation(&state, "node-deleted")
+}
+
+#[tauri::command]
+pub fn node_move(
+    state: State<'_, Shared>,
+    scene_id: String,
+    node_id: String,
+    to_index: usize,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        with_scene_mut(&mut store, &scene_id, |scene| {
+            let from = scene
+                .nodes
+                .iter()
+                .position(|n| n.id == node_id)
+                .ok_or("Блок не найден")?;
+            if from == to_index {
+                return Ok(());
+            }
+            let node = scene.nodes.remove(from);
+            let pos = to_index.min(scene.nodes.len());
+            scene.nodes.insert(pos, node);
+            Ok(())
+        })?;
+    }
+    finish_mutation(&state, "node-moved")
+}
+
+#[tauri::command]
+pub fn node_duplicate(
+    state: State<'_, Shared>,
+    scene_id: String,
+    node_id: String,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        with_scene_mut(&mut store, &scene_id, |scene| {
+            let index = scene
+                .nodes
+                .iter()
+                .position(|n| n.id == node_id)
+                .ok_or("Блок не найден")?;
+            let mut copy = scene.nodes[index].clone();
+            copy.id = new_id();
+            copy.source = NodeSource::Studio;
+            scene.nodes.insert(index + 1, copy);
+            Ok(())
+        })?;
+    }
+    finish_mutation(&state, "node-duplicated")
+}
+
+// ---------------------------------------------------------------------------
+// Characters & variables
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn character_upsert(
+    state: State<'_, Shared>,
+    character: Character,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        let mut character = character;
+        if character.id.trim().is_empty() {
+            character.id = new_id();
+        }
+        match store
+            .project
+            .characters
+            .iter_mut()
+            .find(|c| c.id == character.id)
+        {
+            Some(existing) => *existing = character,
+            None => store.project.characters.push(character),
+        }
+    }
+    finish_mutation(&state, "character-saved")
+}
+
+#[tauri::command]
+pub fn character_delete(state: State<'_, Shared>, id: String) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        store.project.characters.retain(|c| c.id != id);
+        for scene in &mut store.project.scenes {
+            for node in &mut scene.nodes {
+                if node.kind == NodeKind::SAY {
+                    let mut p: SayParams = node.typed();
+                    if p.who.as_deref() == Some(id.as_str()) {
+                        p.who = None;
+                        node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                    }
+                }
+            }
+        }
+    }
+    finish_mutation(&state, "character-deleted")
+}
+
+#[tauri::command]
+pub fn variable_upsert(state: State<'_, Shared>, variable: Variable) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        let mut variable = variable;
+        if variable.id.trim().is_empty() {
+            variable.id = new_id();
+        }
+        variable.name = slugify(&variable.name);
+        match store
+            .project
+            .variables
+            .iter_mut()
+            .find(|v| v.id == variable.id)
+        {
+            Some(existing) => *existing = variable,
+            None => store.project.variables.push(variable),
+        }
+    }
+    finish_mutation(&state, "variable-saved")
+}
+
+#[tauri::command]
+pub fn variable_delete(state: State<'_, Shared>, id: String) -> Result<StateEnvelope, String> {
+    let mut store = lock_store(&state)?;
+    store.checkpoint();
+    store.project.variables.retain(|v| v.id != id);
+    drop(store);
+    finish_mutation(&state, "variable-deleted")
+}
+
+#[tauri::command]
+pub fn meta_update(state: State<'_, Shared>, meta: Meta) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        let created = store.project.meta.created_at.clone();
+        store.project.meta = meta;
+        store.project.meta.created_at = created;
+        store.project.meta.updated_at = crate::model::now_iso();
+    }
+    finish_mutation(&state, "meta-updated")
+}
+
+#[tauri::command]
+pub fn ui_update(state: State<'_, Shared>, ui: UiConfig) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        store.project.ui = ui;
+    }
+    finish_mutation(&state, "ui-updated")
+}
+
+// ---------------------------------------------------------------------------
+// SDK: lint / run / build
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn project_lint(state: State<'_, Shared>) -> Result<LintPayload, String> {
+    {
+        let mut store = lock_store(&state)?;
+        if !store.is_open() {
+            return Err("Проект не открыт".into());
+        }
+        if store.dirty {
+            store.save()?;
+        }
+    }
+    let _ = regenerate(&state, false)?;
+    let sdk = state
+        .sdk_info()
+        .ok_or("Ren'Py SDK не найден. Укажите путь в настройках.")?;
+    let root = state.root().ok_or("Проект не открыт")?;
+    let report = state.sdk.lint(&sdk, &root);
+    let manifest = exporter::load_manifest(&root);
+    let mut mapped = Vec::new();
+    for problem in &report.problems {
+        let node_id = exporter::lookup_node(&manifest, &problem.file, problem.line);
+        let scene_id = node_id.as_ref().and_then(|node| {
+            manifest
+                .srcmap
+                .iter()
+                .find(|e| &e.node_id == node)
+                .map(|e| e.scene_id.clone())
+        });
+        let scene_title = scene_id.as_ref().and_then(|sid| {
+            lock_store(&state)
+                .ok()
+                .and_then(|store| store.project.scene_by_id(sid).map(|s| s.title.clone()))
+        });
+        mapped.push(MappedProblem {
+            file: problem.file.clone(),
+            line: problem.line,
+            message: problem.message.clone(),
+            severity: problem.severity.clone(),
+            node_id,
+            scene_id,
+            scene_title,
+        });
+    }
+    Ok(LintPayload { report, mapped })
+}
+
+#[tauri::command]
+pub fn project_run(state: State<'_, Shared>) -> Result<RunResult, String> {
+    let sdk = state
+        .sdk_info()
+        .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
+    let root = state.root().ok_or("Проект не открыт")?;
+    {
+        let mut store = lock_store(&state)?;
+        if store.dirty {
+            store.save()?;
+        }
+        let _ = store.snapshot("pre-run", "Перед запуском игры");
+    }
+    let report = regenerate(&state, false)?;
+    if !report.conflicts.is_empty() {
+        return Ok(RunResult {
+            ok: false,
+            message: format!(
+                "Запуск отменён: {} файлов изменены вне студии. Откройте экспорт и решите конфликт.",
+                report.conflicts.len()
+            ),
+            pid: None,
+        });
+    }
+    match state.sdk.run_game(&sdk, &root) {
+        Ok(pid) => Ok(RunResult {
+            ok: true,
+            message: "Игра запущена".into(),
+            pid: Some(pid),
+        }),
+        Err(e) => Ok(RunResult {
+            ok: false,
+            message: e,
+            pid: None,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn project_stop(state: State<'_, Shared>) -> Result<bool, String> {
+    Ok(state.sdk.stop_game())
+}
+
+#[tauri::command]
+pub fn project_build(
+    state: State<'_, Shared>,
+    package: String,
+    destination: Option<String>,
+) -> Result<BuildReport, String> {
+    let sdk = state
+        .sdk_info()
+        .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
+    let root = state.root().ok_or("Проект не открыт")?;
+    {
+        let mut store = lock_store(&state)?;
+        if store.dirty {
+            store.save()?;
+        }
+        let _ = store.snapshot("pre-build", "Перед сборкой релиза");
+    }
+    let report = regenerate(&state, false)?;
+    if !report.conflicts.is_empty() {
+        return Err("Сборка отменена: есть конфликты с файлами, изменёнными вне студии.".into());
+    }
+    let dest = destination
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("dist"));
+    Ok(state.sdk.build(&sdk, &root, &package, &dest))
+}
+
+// ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn snapshot_create(
+    state: State<'_, Shared>,
+    label: String,
+) -> Result<SnapshotInfo, String> {
+    let mut store = lock_store(&state)?;
+    if store.dirty {
+        store.save()?;
+    }
+    store.snapshot("manual", &label)
+}
+
+#[tauri::command]
+pub fn snapshot_list(state: State<'_, Shared>) -> Result<Vec<SnapshotInfo>, String> {
+    let store = lock_store(&state)?;
+    store.list_snapshots()
+}
+
+#[tauri::command]
+pub fn snapshot_restore(state: State<'_, Shared>, file: String) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.restore_snapshot(&file)?;
+    }
+    let _ = regenerate(&state, false);
+    state.emit_project_changed("restored");
+    envelope(&state)
+}
+
+#[tauri::command]
+pub fn snapshot_diff(state: State<'_, Shared>, file: String) -> Result<Vec<DiffEntry>, String> {
+    let store = lock_store(&state)?;
+    let raw = store.snapshot_bytes(&file)?;
+    let before: Project = serde_json::from_str(raw.trim_start_matches('\u{feff}'))
+        .map_err(|e| format!("Снимок повреждён: {e}"))?;
+    Ok(diff::diff_projects(&before, &store.project))
+}
+
+// ---------------------------------------------------------------------------
+// Misc
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn open_in_explorer(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    let arg = if target.is_dir() {
+        target.display().to_string()
+    } else {
+        format!("/select,{}", target.display())
+    };
+    std::process::Command::new("explorer")
+        .arg(arg)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn default_block_params(state: State<'_, Shared>, kind: String) -> Result<Value, String> {
+    let store = lock_store(&state)?;
+    Ok(default_params(&store.project, &kind))
+}
+
+#[tauri::command]
+pub fn project_path(state: State<'_, Shared>) -> Result<Option<String>, String> {
+    Ok(state.root().map(|p| p.display().to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Import (.rpy → blocks)
+// ---------------------------------------------------------------------------
+
+fn import_root(path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.join("game").is_dir() {
+        path
+    } else if path.is_file() {
+        path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
+    } else {
+        path
+    }
+}
+
+pub(crate) fn backup_sources(root: &Path, inputs: &[crate::importer::ImportInput]) -> Result<(), String> {
+    let backup = root.join("renpy-studio").join("imported-source");
+    for input in inputs {
+        let source = root.join(&input.path);
+        if !source.is_file() {
+            continue;
+        }
+        let target = backup.join(&input.path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if target.exists() {
+            let _ = std::fs::remove_file(&target);
+        }
+        std::fs::rename(&source, &target)
+            .or_else(|_| {
+                std::fs::copy(&source, &target)
+                    .and_then(|_| std::fs::remove_file(&source))
+                    .map(|_| ())
+            })
+            .map_err(|e| format!("Не удалось сохранить копию {}: {e}", input.path))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn import_scan(path: String) -> Result<crate::importer::ImportReport, String> {
+    let root = import_root(&path);
+    let (inputs, skipped) = crate::importer::collect_sources(&root)?;
+    let title = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Импорт".into());
+    let (_project, mut report) = crate::importer::import(&inputs, &title, &slugify(&title));
+    report.skipped_files = skipped;
+    Ok(report)
+}
+
+#[tauri::command]
+pub fn import_apply(
+    state: State<'_, Shared>,
+    path: String,
+    mode: String,
+) -> Result<ImportPayload, String> {
+    let root = import_root(&path);
+    let (inputs, skipped) = crate::importer::collect_sources(&root)?;
+    if inputs.is_empty() {
+        return Err("В папке не найдено .rpy-файлов со сценарием".into());
+    }
+    let title = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Импорт".into());
+    let (mut imported, mut report) = crate::importer::import(&inputs, &title, &slugify(&title));
+    report.skipped_files = skipped;
+    if imported.scenes.is_empty() {
+        return Err("Не удалось найти ни одной сцены (label) в выбранных файлах".into());
+    }
+
+    // Original .rpy files must not coexist with generated ones: duplicate labels
+    // would break the game. Keep them under renpy-studio/imported-source.
+    backup_sources(&root, &inputs)?;
+
+    let mut store = lock_store(&state)?;
+    let mut direct_env = None;
+    // Importing into a folder that has no studio project yet: the folder becomes
+    // the project root (Scenario B of the spec: "Open project → import").
+    if !store.is_open() {
+        store.root = Some(root.clone());
+        store.project.meta.title = title.clone();
+        store.project.meta.game_slug = slugify(&title);
+    }
+    if mode == "merge" {
+        if !store.is_open() {
+            return Err("Сначала откройте проект RenPy Studio".into());
+        }
+        let mut existing_scene_ids: std::collections::HashSet<String> =
+            store.project.scenes.iter().map(|s| s.id.clone()).collect();
+        for scene in &mut imported.scenes {
+            if !existing_scene_ids.insert(scene.id.clone()) {
+                scene.id = new_id();
+            }
+            for node in &mut scene.nodes {
+                node.id = new_id();
+            }
+        }
+        let existing_var_names: std::collections::HashSet<String> =
+            store.project.variables.iter().map(|v| v.name.clone()).collect();
+        for variable in imported.variables {
+            if !existing_var_names.contains(&variable.name) {
+                store.project.variables.push(variable);
+            }
+        }
+        let existing_chars: std::collections::HashSet<String> = store
+            .project
+            .characters
+            .iter()
+            .map(|c| c.name.to_lowercase())
+            .collect();
+        for character in imported.characters {
+            if !existing_chars.contains(&character.name.to_lowercase()) {
+                store.project.characters.push(character);
+            }
+        }
+        store.project.scenes.extend(imported.scenes);
+        if !imported.init_script.trim().is_empty() {
+            store.project.init_script.push_str("\n\n");
+            store.project.init_script.push_str(&imported.init_script);
+        }
+    } else {
+        let root = store.root.clone().ok_or("Проект не открыт")?;
+        imported.meta.game_slug = store.project.meta.game_slug.clone();
+        if imported.meta.start_scene.is_none() {
+            imported.meta.start_scene = imported.scenes.first().map(|s| s.id.clone());
+        }
+        store.project = imported.clone();
+        store.root = Some(root);
+        store.clear_history();
+        direct_env = Some(crate::commands::envelope_of(&store));
+    }
+    store.checkpoint();
+    store.save()?;
+    let root_for_watch = store.root.clone();
+    let title_for_settings = store.project.meta.title.clone();
+    drop(store);
+    if let Some(root) = root_for_watch {
+        if let Ok(mut watcher) = state.watcher.lock() {
+            *watcher = None;
+            if let Ok(started) = crate::watcher::start(root.clone(), state.app.clone()) {
+                *watcher = Some(started);
+            }
+        }
+        if let Ok(mut settings) = state.settings.lock() {
+            settings.remember_project(&root.display().to_string(), &title_for_settings);
+            let _ = settings.save();
+        }
+    }
+    let _ = regenerate(&state, true);
+    let _ = state
+        .app
+        .emit("studio://project-changed", json!({ "reason": "imported" }));
+
+    let project = match direct_env {
+        Some(env) => Some(env.project),
+        None => Some(envelope(&state)?.project),
+    };
+    Ok(ImportPayload { project, report })
+}
+
+// ---------------------------------------------------------------------------
+// MCP server control
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn mcp_start(state: State<'_, Shared>, port: Option<u16>) -> Result<Value, String> {
+    let mut guard = state.mcp.lock().map_err(|e| e.to_string())?;
+    if let Some(handle) = guard.as_ref() {
+        return Ok(json!({ "running": true, "port": handle.port }));
+    }
+    let mut settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    let chosen = port.unwrap_or(settings.mcp_port);
+    let handle = crate::mcp::start(state.inner().clone(), chosen, None)?;
+    settings.mcp_port = chosen;
+    settings.mcp_enabled = true;
+    if let Ok(mut s) = state.settings.lock() {
+        *s = settings.clone();
+        let _ = s.save();
+    }
+    *guard = Some(handle);
+    Ok(json!({ "running": true, "port": chosen }))
+}
+
+#[tauri::command]
+pub fn mcp_stop(state: State<'_, Shared>) -> Result<Value, String> {
+    let mut guard = state.mcp.lock().map_err(|e| e.to_string())?;
+    *guard = None;
+    if let Ok(mut settings) = state.settings.lock() {
+        settings.mcp_enabled = false;
+        let _ = settings.save();
+    }
+    Ok(json!({ "running": false }))
+}
+
+#[tauri::command]
+pub fn mcp_status(state: State<'_, Shared>) -> Result<Value, String> {
+    let guard = state.mcp.lock().map_err(|e| e.to_string())?;
+    match guard.as_ref() {
+        Some(handle) => Ok(json!({
+            "running": true,
+            "port": handle.port,
+            "url": format!("http://127.0.0.1:{}/mcp", handle.port)
+        })),
+        None => Ok(json!({ "running": false })),
+    }
+}

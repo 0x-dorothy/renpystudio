@@ -1,0 +1,41 @@
+[package]
+name = "renpy-studio"
+version = "0.1.0"
+description = "Visual no-code IDE for Ren'Py visual novels"
+authors = ["RenPy Studio"]
+edition = "2021"
+rust-version = "1.77"
+
+[features]
+default = []
+# Console subsystem for headless commands (`--new`, `--export`, `--lint`).
+cli = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v7", "serde"] }
+notify = "8"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util"] }
+anyhow = "1"
+thiserror = "2"
+walkdir = "2"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+base64 = "0.22"
+tracing = "0.1"
+sysinfo = "0.37"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
