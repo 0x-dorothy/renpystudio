@@ -15,11 +15,11 @@ import {
 } from "lucide-react";
 import { useStudio } from "../store";
 import { api } from "../api";
-import { pickFolder } from "../dialogs";
-import { Button, Checkbox, Field, IconButton, Input, Modal, Segmented, Select, Spinner, Textarea } from "./ui";
+import { pickFolder } from "../dialogs";import { Button, Checkbox, Field, IconButton, Input, Modal, Segmented, Select, Spinner, Textarea } from "./ui";
 import type { ImportReport, Settings } from "../types";
 import { formatDateTime } from "../util";
 import { useDebouncedValue } from "../hooks";
+import { listen } from "@tauri-apps/api/event";
 
 export function StudioModals() {
   return (
@@ -29,6 +29,7 @@ export function StudioModals() {
       <BuildModal />
       <LintModal />
       <ConflictsModal />
+      <DiffModal />
       <ImportModal />
     </>
   );
@@ -336,6 +337,7 @@ function ProjectSection() {
   const { t } = useTranslation();
   const project = useStudio((s) => s.project);
   const saveMeta = useStudio((s) => s.saveMeta);
+  const translateProject = useStudio((s) => s.translateProject);
   const [meta, setMeta] = useDebouncedValue(
     project?.meta.createdAt ?? "meta",
     project?.meta ?? null,
@@ -378,6 +380,21 @@ function ProjectSection() {
           />
         </Field>
       </div>
+      <Field label={t("settings.localization")} hint={t("settings.tlHint")}>
+        <div className="flex flex-wrap gap-2">
+          {project.locales.filter((locale) => locale !== project.meta.defaultLocale).length === 0 ? (
+            <span className="text-[11px] text-[var(--muted-2)]">—</span>
+          ) : (
+            project.locales
+              .filter((locale) => locale !== project.meta.defaultLocale)
+              .map((locale) => (
+                <Button key={locale} size="sm" onClick={() => void translateProject(locale)}>
+                  {t("settings.generateTl", { locale })}
+                </Button>
+              ))
+          )}
+        </div>
+      </Field>
     </Section>
   );
 }
@@ -390,7 +407,8 @@ function Section({
   title: string;
   icon?: React.ReactNode;
   children: React.ReactNode;
-}) {  return (
+}) {
+  return (
     <div className="mb-5">
       <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--muted-2)]">
         {icon}
@@ -412,20 +430,46 @@ function BuildModal() {
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string>("");
   const [ok, setOk] = useState<boolean | null>(null);
+  const [artifact, setArtifact] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const unLog = listen<{ line: string }>("studio://build-log", (event) => {
+      if (!alive) return;
+      setLog((prev) => (prev ? `${prev}\n${event.payload.line}` : event.payload.line));
+    });
+    const unDone = listen<{ ok: boolean; artifact?: string | null }>("studio://build-done", (event) => {
+      if (!alive) return;
+      setRunning(false);
+      setOk(event.payload.ok);
+      setArtifact(event.payload.artifact ?? null);
+    });
+    void api.buildStatus().then((state) => {
+      if (!alive) return;
+      setRunning(state.running);
+      setOk(state.ok);
+      setArtifact(state.artifact);
+      if (state.log.length) setLog(state.log.join("\n"));
+    });
+    return () => {
+      alive = false;
+      void unLog.then((fn) => fn());
+      void unDone.then((fn) => fn());
+    };
+  }, [open]);
 
   const build = async () => {
     setRunning(true);
     setLog("");
     setOk(null);
+    setArtifact(null);
     try {
-      const report = await api.build(pkg);
-      setOk(report.ok);
-      setLog(report.log || (report.ok ? "OK" : "Build failed"));
+      await api.buildStart(pkg);
     } catch (error) {
+      setRunning(false);
       setOk(false);
       setLog(String(error));
-    } finally {
-      setRunning(false);
     }
   };
 
@@ -457,6 +501,7 @@ function BuildModal() {
           ]}
         />
       </Field>
+      <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted-2)]">{t("build.requires")}</p>
       {!sdk ? (
         <div className="mb-3 flex items-center gap-2 text-[12px] text-[var(--warn)]">
           <AlertTriangle size={13} /> {t("error.sdkMissing")}
@@ -464,11 +509,12 @@ function BuildModal() {
       ) : null}
       {ok !== null ? (
         <div className={`mb-2 flex items-center gap-2 text-[12px] ${ok ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}>
-          {ok ? <Check size={13} /> : <X size={13} />} {ok ? t("build.done", { artifact: "dist" }) : t("build.failed")}
+          {ok ? <Check size={13} /> : <X size={13} />}{" "}
+          {ok ? t("build.done", { artifact: artifact ?? "dist" }) : t("build.failed")}
         </div>
       ) : null}
       <Field label={t("build.log")}>
-        <Textarea className="mono text-[11px]" rows={12} readOnly value={log} />
+        <Textarea className="mono text-[11px]" rows={14} readOnly value={log} />
       </Field>
     </Modal>
   );
@@ -626,6 +672,74 @@ function ConflictsModal() {
           </div>
         ))}
       </div>
+    </Modal>
+  );
+}
+
+/* ── External diff ─────────────────────────────────────────────────── */
+
+function DiffModal() {
+  const { t } = useTranslation();
+  const open = useStudio((s) => s.modal) === "diff";
+  const close = useStudio((s) => s.closeModal);
+  const diffs = useStudio((s) => s.diffs);
+  const reload = useStudio((s) => s.reloadProject);
+
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title={t("diff.title")}
+      width={860}
+      footer={
+        <>
+          <Button variant="ghost" onClick={close}>
+            {t("common.close")}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              void reload();
+              close();
+            }}
+          >
+            {t("diff.reload")}
+          </Button>
+        </>
+      }
+    >
+      {!diffs || diffs.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-[var(--border)] px-4 py-8 text-center text-[12px] text-[var(--muted-2)]">
+          {t("diff.empty")}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {diffs.map((diff) => (
+            <div key={diff.path} className="overflow-hidden rounded-lg border border-[var(--border)]">
+              <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-1.5">
+                <span className="mono truncate text-[11.5px]">{diff.path}</span>
+                <span className="chip">{t(`diff.${diff.status}`)}</span>
+              </div>
+              <pre className="mono max-h-[220px] overflow-auto px-3 py-2 text-[10.5px] leading-relaxed">
+                {diff.lines.map((line, index) => (
+                  <div
+                    key={index}
+                    className={
+                      line.startsWith("+")
+                        ? "text-[var(--ok)]"
+                        : line.startsWith("-")
+                          ? "text-[var(--danger)]"
+                          : "text-[var(--muted)]"
+                    }
+                  >
+                    {line || " "}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }

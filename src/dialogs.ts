@@ -11,6 +11,12 @@ export async function pickFile(filters?: { name: string; extensions: string[] }[
   return typeof result === "string" ? result : null;
 }
 
+export async function pickFiles(filters?: { name: string; extensions: string[] }[]): Promise<string[]> {
+  const result = await open({ multiple: true, filters });
+  if (Array.isArray(result)) return result;
+  return typeof result === "string" ? [result] : [];
+}
+
 export async function revealProject() {
   const path = await api.projectPath();
   if (path) await api.revealInExplorer(path);

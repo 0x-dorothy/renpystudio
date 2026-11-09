@@ -307,3 +307,30 @@ export interface ExternalChange {
   assets: string[];
   projectFile: boolean;
 }
+
+export interface AssetImportReport {
+  imported: string[];
+  skipped: string[];
+  assets: AssetInfo[];
+}
+
+export interface TranslateReport {
+  ok: boolean;
+  locale: string;
+  log: string;
+  files: number;
+}
+
+export interface BuildState {
+  running: boolean;
+  package: string;
+  log: string[];
+  ok: boolean | null;
+  artifact: string | null;
+}
+
+export interface FileDiff {
+  path: string;
+  status: "modified" | "added" | "removed";
+  lines: string[];
+}

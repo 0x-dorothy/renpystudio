@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Copy,
@@ -33,7 +33,22 @@ export function SceneEditor() {
   const openPalette = useStudio((s) => s.openPalette);
   const paletteIndex = useStudio((s) => s.paletteIndex);
   const moveNode = useStudio((s) => s.moveNode);
+  const duplicateNode = useStudio((s) => s.duplicateNode);
+  const deleteNode = useStudio((s) => s.deleteNode);
+  const setTab = useStudio((s) => s.setTab);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [menu, setMenu] = useState<{ nodeId: string; index: number; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [menu]);
 
   const scene = project?.scenes.find((s) => s.id === activeSceneId) ?? null;
   const paletteOpen = paletteIndex !== null;
@@ -81,6 +96,11 @@ export function SceneEditor() {
                 selected={node.id === selectedNodeId}
                 onSelect={() => selectNode(node.id)}
                 onDragLeaveZone={() => setDropIndex(null)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  selectNode(node.id);
+                  setMenu({ nodeId: node.id, index, x: event.clientX, y: event.clientY });
+                }}
               />
               <InsertZone
                 index={index + 1}
@@ -108,6 +128,55 @@ export function SceneEditor() {
       </div>
 
       <BlockPalette open={paletteOpen} onClose={() => useStudio.getState().closePalette()} />
+
+      {menu ? (
+        <div
+          className="fixed z-[65] w-[196px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel)] py-1 shadow-2xl"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          {[
+            {
+              label: t("action.duplicate"),
+              run: () => void duplicateNode(menu.nodeId),
+            },
+            {
+              label: t("action.moveUp"),
+              run: () => void moveNode(menu.nodeId, Math.max(0, menu.index - 1)),
+            },
+            {
+              label: t("action.moveDown"),
+              run: () => void moveNode(menu.nodeId, Math.min(scene.nodes.length - 1, menu.index + 1)),
+            },
+            {
+              label: t("action.showOnGraph"),
+              run: () => {
+                selectNode(menu.nodeId);
+                setTab("graph");
+              },
+            },
+            {
+              label: t("common.delete"),
+              danger: true,
+              run: () => void deleteNode(menu.nodeId),
+            },
+          ].map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => {
+                item.run();
+                setMenu(null);
+              }}
+              className={`flex w-full items-center px-3 py-1.5 text-left text-[12px] hover:bg-[var(--panel-2)] ${
+                item.danger ? "text-[var(--danger)]" : "text-[var(--text)]"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -158,12 +227,14 @@ function BlockCard({
   selected,
   onSelect,
   onDragLeaveZone,
+  onContextMenu,
 }: {
   node: StudioNode;
   index: number;
   selected: boolean;
   onSelect: () => void;
   onDragLeaveZone: () => void;
+  onContextMenu?: (event: React.MouseEvent) => void;
 }) {
   const { t } = useTranslation();
   const project = useStudio((s) => s.project);
@@ -184,10 +255,15 @@ function BlockCard({
       }}
       onDragEnd={onDragLeaveZone}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       className={`card group relative flex cursor-pointer items-start gap-3 px-3 py-2.5 ${
         selected ? "selected" : ""
-      } ${node.id === selectedNodeId ? "" : ""}`}
-      style={{ borderLeft: `3px solid ${color}55` }}
+      }`}
+      style={{
+        borderLeft: `3px solid ${color}55`,
+        contentVisibility: "auto",
+        containIntrinsicSize: "68px",
+      }}
     >
       <div className="mt-0.5 flex flex-none flex-col items-center gap-1">
         <GripVertical size={13} className="text-[var(--muted-2)] opacity-0 transition-opacity group-hover:opacity-100" />

@@ -90,6 +90,22 @@ export const api = {
   importScan: (path: string) => invoke<ImportReport>("import_scan", { path }),
   importApply: (path: string, mode: "replace" | "merge") =>
     invoke<ImportPayload>("import_apply", { path, mode }),
+  importAssets: (paths: string[]) =>
+    invoke<import("./types").AssetImportReport>("asset_import", { paths }),
+  translate: (locale: string) =>
+    invoke<import("./types").TranslateReport>("project_translate", { locale }),
+  buildStart: (pkg: string, destination?: string) =>
+    invoke<void>("project_build_start", { package: pkg, destination }),
+  buildStatus: () => invoke<import("./types").BuildState>("project_build_status"),
+  externalDiff: (files: string[]) =>
+    invoke<import("./types").FileDiff[]>("external_diff", { files }),
+  retargetEdge: (args: {
+    sceneId: string;
+    nodeId: string;
+    target: string | null;
+    optionId?: string | null;
+    branch?: "then" | "else" | null;
+  }) => invoke<StateEnvelope>("node_retarget", args),
 
   mcpStart: (port?: number) => invoke<{ running: boolean; port: number }>("mcp_start", { port }),
   mcpStop: () => invoke<{ running: boolean }>("mcp_stop"),

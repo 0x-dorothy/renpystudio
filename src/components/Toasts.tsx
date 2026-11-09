@@ -47,6 +47,7 @@ export function ExternalChangeBanner() {
   const change = useStudio((s) => s.externalChange);
   const dismiss = useStudio((s) => s.dismissExternal);
   const reload = useStudio((s) => s.reloadProject);
+  const openDiff = useStudio((s) => s.openExternalDiff);
 
   if (!change) return null;
   const rpyCount = change.rpy.length;
@@ -66,6 +67,11 @@ export function ExternalChangeBanner() {
       <Button size="sm" variant="ghost" onClick={dismiss}>
         {t("conflict.ignore")}
       </Button>
+      {change.rpy.length > 0 ? (
+        <Button size="sm" variant="ghost" onClick={() => void openDiff()}>
+          {t("conflict.diff")}
+        </Button>
+      ) : null}
       <Button
         size="sm"
         variant="primary"

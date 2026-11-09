@@ -1,11 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { useMemo } from "react";
-import { FolderOpen, Music, Image as ImageIcon, RefreshCw } from "lucide-react";
+import { FolderOpen, Music, Image as ImageIcon, RefreshCw, Upload } from "lucide-react";
 import { useStudio } from "../store";
 import { Button, Empty, IconButton, Input } from "./ui";
 import { useState } from "react";
 import { api } from "../api";
 import { assetUrl, basename } from "../util";
+import { pickFiles } from "../dialogs";
 
 const KINDS = [
   { key: "image", label: "assets.images", icon: ImageIcon },
@@ -16,6 +17,7 @@ export function AssetsTab() {
   const { t } = useTranslation();
   const assets = useStudio((s) => s.assets);
   const refreshAssets = useStudio((s) => s.refreshAssets);
+  const importAssets = useStudio((s) => s.importAssets);
   const status = useStudio((s) => s.status);
   const [kind, setKind] = useState<"image" | "audio">("image");
   const [query, setQuery] = useState("");
@@ -68,6 +70,18 @@ export function AssetsTab() {
           <IconButton title={t("common.reload")} onClick={() => void refreshAssets()}>
             <RefreshCw size={14} />
           </IconButton>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              void (async () => {
+                const files = await pickFiles();
+                if (files.length > 0) await importAssets(files);
+              })();
+            }}
+          >
+            <Upload size={14} /> {t("assets.import")}
+          </Button>
           <Button size="sm" variant="ghost" onClick={() => void openFolder()}>
             <FolderOpen size={14} /> {t("common.openFolder")}
           </Button>

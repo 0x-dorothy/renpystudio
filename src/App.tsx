@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FileCode2,
@@ -23,6 +23,7 @@ import { Welcome } from "./components/Welcome";
 import { StudioModals } from "./components/Modals";
 import { HistoryModal } from "./components/HistoryModal";
 import { ExternalChangeBanner, Toasts } from "./components/Toasts";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 const TABS: { id: Tab; icon: typeof FileCode2; labelKey: string }[] = [
   { id: "scene", icon: FileCode2, labelKey: "nav.scene" },
@@ -42,10 +43,35 @@ export default function App() {
   const init = useStudio((s) => s.init);
   const editLocale = useStudio((s) => s.editLocale);
   const setEditLocale = useStudio((s) => s.setEditLocale);
+  const [draggingFiles, setDraggingFiles] = useState(false);
 
   useEffect(() => {
     void init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Files dragged from Explorer become project assets (game/images, game/audio, ...).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "enter" || payload.type === "over") {
+          setDraggingFiles(true);
+        } else if (payload.type === "leave") {
+          setDraggingFiles(false);
+        } else if (payload.type === "drop") {
+          setDraggingFiles(false);
+          if (payload.paths.length > 0 && useStudio.getState().project) {
+            void useStudio.getState().importAssets(payload.paths);
+          }
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => unlisten?.();
   }, []);
 
   useEffect(() => {
@@ -81,6 +107,40 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+      if (typing) return;
+      const state = useStudio.getState();
+      const mod = event.ctrlKey || event.metaKey;
+      const scene = state.project?.scenes.find((entry) => entry.id === state.activeSceneId) ?? null;
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        state.openPalette(scene?.nodes.length ?? 0);
+      } else if ((event.key === "Delete" || event.key === "Backspace") && state.selectedNodeId) {
+        event.preventDefault();
+        void state.deleteNode(state.selectedNodeId);
+      } else if (mod && event.key.toLowerCase() === "d" && state.selectedNodeId) {
+        event.preventDefault();
+        void state.duplicateNode(state.selectedNodeId);
+      } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown") && state.selectedNodeId && scene) {
+        event.preventDefault();
+        const index = scene.nodes.findIndex((node) => node.id === state.selectedNodeId);
+        if (index === -1) return;
+        const next = event.key === "ArrowUp" ? Math.max(0, index - 1) : Math.min(scene.nodes.length - 1, index + 1);
+        if (next !== index) void state.moveNode(state.selectedNodeId, next);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   if (!ready) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--bg)]">
@@ -96,6 +156,13 @@ export default function App() {
     <div className="flex h-full flex-col bg-[var(--bg)] text-[var(--text)]">
       <TopBar />
       <ExternalChangeBanner />
+      {draggingFiles ? (
+        <div className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center border-4 border-dashed border-[var(--accent)]/60 bg-[var(--accent-soft)]/20">
+          <div className="rounded-xl border border-[var(--accent)]/50 bg-[var(--panel)] px-4 py-3 text-[13px] font-medium shadow-2xl">
+            {t("assets.dropHint")}
+          </div>
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-1">
         {project ? (
           <>

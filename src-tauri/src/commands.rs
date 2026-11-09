@@ -14,8 +14,16 @@ use crate::validation::{self, GraphData, ValidationReport};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct AppState {
     pub store: Mutex<Store>,
@@ -25,6 +33,17 @@ pub struct AppState {
     pub watcher: Mutex<Option<crate::watcher::ProjectWatcher>>,
     pub mcp: Mutex<Option<crate::mcp::McpHandle>>,
     pub last_export: Mutex<Option<ExportReport>>,
+    pub build: Mutex<BuildState>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildState {
+    pub running: bool,
+    pub package: String,
+    pub log: Vec<String>,
+    pub ok: Option<bool>,
+    pub artifact: Option<String>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -40,6 +59,7 @@ impl AppState {
             watcher: Mutex::new(None),
             mcp: Mutex::new(None),
             last_export: Mutex::new(None),
+            build: Mutex::new(BuildState::default()),
         })
     }
 
@@ -1439,4 +1459,413 @@ pub fn mcp_status(state: State<'_, Shared>) -> Result<Value, String> {
         })),
         None => Ok(json!({ "running": false })),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Assets: drag & drop import
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetImportReport {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+    pub assets: Vec<AssetInfo>,
+}
+
+#[tauri::command]
+pub fn asset_import(
+    state: State<'_, Shared>,
+    paths: Vec<String>,
+) -> Result<AssetImportReport, String> {
+    let root = state.root().ok_or("Проект не открыт")?;
+    if paths.is_empty() {
+        return Err("Нет файлов для импорта".into());
+    }
+    let sources: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    let (imported, skipped) = crate::assets::import_files(&root, &sources);
+    if !imported.is_empty() {
+        crate::watcher::suppress_for(1500);
+    }
+    let assets = crate::assets::scan(&root);
+    let _ = state.app.emit(
+        "studio://assets-changed",
+        json!({ "imported": imported.len() }),
+    );
+    Ok(AssetImportReport {
+        imported,
+        skipped,
+        assets,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Localization: SDK translation files
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateReport {
+    pub ok: bool,
+    pub locale: String,
+    pub log: String,
+    pub files: usize,
+}
+
+#[tauri::command]
+pub fn project_translate(
+    state: State<'_, Shared>,
+    locale: String,
+) -> Result<TranslateReport, String> {
+    let locale = slugify(&locale);
+    if locale.is_empty() {
+        return Err("Некорректный код языка".into());
+    }
+    let sdk = state
+        .sdk_info()
+        .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
+    let root = state.root().ok_or("Проект не открыт")?;
+    {
+        let store = lock_store(&state)?;
+        if !store.project.locales.iter().any(|l| l == &locale) {
+            return Err(format!(
+                "Язык «{locale}» не объявлен в проекте. Добавьте его в настройках проекта."
+            ));
+        }
+    }
+    let mut cmd = Command::new(&sdk.exe);
+    cmd.arg(&root)
+        .arg("translate")
+        .arg(&locale)
+        .current_dir(&root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Не удалось запустить перевод: {e}"))?;
+    let mut log = String::from_utf8_lossy(&output.stdout).to_string();
+    log.push_str(&String::from_utf8_lossy(&output.stderr));
+    let dir = root.join("game").join("tl").join(&locale);
+    let files = walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("rpy"))
+        .count();
+    crate::watcher::suppress_for(3000);
+    Ok(TranslateReport {
+        ok: output.status.success(),
+        locale,
+        log,
+        files,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Build with a live log
+// ---------------------------------------------------------------------------
+
+fn push_build_line(state: &Shared, line: String) {
+    let line = line.trim_end().to_string();
+    if line.is_empty() {
+        return;
+    }
+    if let Ok(mut build) = state.build.lock() {
+        build.log.push(line.clone());
+        if build.log.len() > 4000 {
+            build.log.remove(0);
+        }
+    }
+    let _ = state
+        .app
+        .emit("studio://build-log", json!({ "line": line }));
+}
+
+#[tauri::command]
+pub fn project_build_start(
+    state: State<'_, Shared>,
+    package: String,
+    destination: Option<String>,
+) -> Result<(), String> {
+    {
+        let build = state.build.lock().map_err(|e| e.to_string())?;
+        if build.running {
+            return Err("Сборка уже идёт".into());
+        }
+    }
+    let sdk = state
+        .sdk_info()
+        .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
+    let root = state.root().ok_or("Проект не открыт")?;
+    {
+        let mut store = lock_store(&state)?;
+        if store.dirty {
+            store.save()?;
+        }
+        let _ = store.snapshot("pre-build", "Перед сборкой релиза");
+    }
+    let report = regenerate(&state, false)?;
+    if !report.conflicts.is_empty() {
+        return Err("Сборка отменена: есть конфликты с файлами, изменёнными вне студии.".into());
+    }
+    let dest = destination
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("dist"));
+    let _ = std::fs::create_dir_all(&dest);
+    {
+        let mut build = state.build.lock().map_err(|e| e.to_string())?;
+        *build = BuildState {
+            running: true,
+            package: package.clone(),
+            log: vec![format!("Сборка пакета «{package}» → {}", dest.display())],
+            ok: None,
+            artifact: None,
+        };
+    }
+    let shared = state.inner().clone();
+    std::thread::spawn(move || {
+        let mut cmd = Command::new(&sdk.exe);
+        cmd.arg("launcher")
+            .arg("distribute")
+            .arg(&root)
+            .arg("--package")
+            .arg(&package)
+            .arg("--destination")
+            .arg(&dest)
+            .current_dir(&sdk.root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                push_build_line(&shared, format!("Не удалось запустить сборку: {err}"));
+                if let Ok(mut build) = shared.build.lock() {
+                    build.running = false;
+                    build.ok = Some(false);
+                }
+                let _ = shared
+                    .app
+                    .emit("studio://build-done", json!({ "ok": false }));
+                return;
+            }
+        };
+        let mut readers = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            let shared = shared.clone();
+            readers.push(std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    push_build_line(&shared, line);
+                }
+            }));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            let shared = shared.clone();
+            readers.push(std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    push_build_line(&shared, line);
+                }
+            }));
+        }
+        let status = child.wait();
+        for reader in readers {
+            let _ = reader.join();
+        }
+        let success = status.map(|s| s.success()).unwrap_or(false);
+        let artifact = newest_entry(&dest);
+        let ok = success && artifact.is_some();
+        if success && artifact.is_none() {
+            push_build_line(
+                &shared,
+                "Пакеты не выбраны или SDK ничего не создал — проверьте журнал выше.".into(),
+            );
+        }
+        if let Ok(mut build) = shared.build.lock() {
+            build.running = false;
+            build.ok = Some(ok);
+            build.artifact = artifact.clone();
+        }
+        let _ = shared
+            .app
+            .emit("studio://build-done", json!({ "ok": ok, "artifact": artifact }));
+    });
+    Ok(())
+}
+
+fn newest_entry(dir: &Path) -> Option<String> {
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if newest.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
+                    newest = Some((modified, entry.path()));
+                }
+            }
+        }
+    }
+    newest.map(|(_, path)| path.display().to_string())
+}
+
+#[tauri::command]
+pub fn project_build_status(state: State<'_, Shared>) -> Result<BuildState, String> {
+    Ok(state.build.lock().map_err(|e| e.to_string())?.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Diff of files changed outside the studio
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiff {
+    pub path: String,
+    /// modified | added | removed
+    pub status: String,
+    pub lines: Vec<String>,
+}
+
+#[tauri::command]
+pub fn external_diff(
+    state: State<'_, Shared>,
+    files: Vec<String>,
+) -> Result<Vec<FileDiff>, String> {
+    let (root, project) = {
+        let store = lock_store(&state)?;
+        (
+            store.root.clone().ok_or("Проект не открыт")?,
+            store.project.clone(),
+        )
+    };
+    let locale = if project.meta.default_locale.is_empty() {
+        "ru".to_string()
+    } else {
+        project.meta.default_locale.clone()
+    };
+    let bundle = crate::generator::generate(
+        &project,
+        &GenOptions {
+            locale,
+            force: true,
+        },
+    );
+    let generated: std::collections::HashMap<String, String> = bundle
+        .files
+        .into_iter()
+        .map(|file| (file.path, file.content))
+        .collect();
+    let mut out = Vec::new();
+    for path in files {
+        let abs = root.join(&path);
+        let disk = std::fs::read_to_string(&abs);
+        match (generated.get(&path), disk) {
+            (Some(expected), Ok(actual)) => {
+                if expected == &actual {
+                    continue;
+                }
+                let diff = similar::TextDiff::from_lines(expected, &actual);
+                let mut lines = Vec::new();
+                for group in diff.grouped_ops(2) {
+                    if lines.len() >= 400 {
+                        break;
+                    }
+                    if !lines.is_empty() {
+                        lines.push("…".to_string());
+                    }
+                    for op in group {
+                        for change in diff.iter_changes(&op) {
+                            if lines.len() >= 400 {
+                                break;
+                            }
+                            let sign = match change.tag() {
+                                similar::ChangeTag::Delete => "-",
+                                similar::ChangeTag::Insert => "+",
+                                similar::ChangeTag::Equal => " ",
+                            };
+                            lines.push(format!("{sign}{}", change.value().trim_end()));
+                        }
+                    }
+                }
+                out.push(FileDiff {
+                    path,
+                    status: "modified".into(),
+                    lines,
+                });
+            }
+            (Some(_), Err(_)) => out.push(FileDiff {
+                path,
+                status: "removed".into(),
+                lines: Vec::new(),
+            }),
+            (None, Ok(actual)) => out.push(FileDiff {
+                path,
+                status: "added".into(),
+                lines: actual
+                    .lines()
+                    .take(300)
+                    .map(|line| format!("+{line}"))
+                    .collect(),
+            }),
+            (None, Err(_)) => {}
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Graph: retarget an edge
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn node_retarget(
+    state: State<'_, Shared>,
+    scene_id: String,
+    node_id: String,
+    target: Option<String>,
+    option_id: Option<String>,
+    branch: Option<String>,
+) -> Result<StateEnvelope, String> {
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        with_scene_mut(&mut store, &scene_id, |scene| {
+            let node = scene
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == node_id)
+                .ok_or("Блок не найден")?;
+            match node.kind.as_str() {
+                NodeKind::JUMP => {
+                    let mut p: JumpParams = node.typed();
+                    p.target = target;
+                    node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                }
+                NodeKind::MENU => {
+                    let option_id = option_id.ok_or("Не указан вариант выбора")?;
+                    let mut p: MenuParams = node.typed();
+                    let option = p
+                        .options
+                        .iter_mut()
+                        .find(|option| option.id == option_id)
+                        .ok_or("Вариант не найден")?;
+                    option.target = target;
+                    node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                }
+                NodeKind::IF => {
+                    let mut p: IfParams = node.typed();
+                    match branch.as_deref() {
+                        Some("else") => p.else_target = target,
+                        _ => p.then_target = target,
+                    }
+                    node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                }
+                _ => return Err("У этого блока нет перехода".into()),
+            }
+            Ok(())
+        })?;
+    }
+    finish_mutation(&state, "edge-retargeted")
 }

@@ -33,7 +33,8 @@ export type ModalKind =
   | "import"
   | "build"
   | "lint"
-  | "conflicts";
+  | "conflicts"
+  | "diff";
 
 export interface Toast {
   id: number;
@@ -65,6 +66,7 @@ interface StudioState {
   busy: boolean;
   busyLabel: string | null;
   externalChange: ExternalChange | null;
+  diffs: import("./types").FileDiff[] | null;
   toasts: Toast[];
   mcp: { running: boolean; port?: number; url?: string };
   welcomeStep: "home" | "new" | "open";
@@ -133,6 +135,16 @@ interface StudioState {
 
   openProject: (path: string) => Promise<void>;
   importProject: (path: string, mode: "replace" | "merge") => Promise<void>;
+  importAssets: (paths: string[]) => Promise<void>;
+  translateProject: (locale: string) => Promise<void>;
+  openExternalDiff: () => Promise<void>;
+  retargetEdge: (args: {
+    sceneId: string;
+    nodeId: string;
+    target: string | null;
+    optionId?: string | null;
+    branch?: "then" | "else" | null;
+  }) => Promise<void>;
   newProject: (parent: string, title: string) => Promise<void>;
   createInExisting: (path: string, title: string) => Promise<void>;
   closeProject: () => Promise<void>;
@@ -249,6 +261,9 @@ export const useStudio = create<StudioState>((set, get) => {
         const status = get().status;
         if (status) set({ status: { ...status, lastSaved: event.payload.at, dirty: false } });
       });
+      void listen("studio://assets-changed", () => {
+        void get().refreshAssets();
+      });
     } catch (error) {
       set({ ready: true });
       fail(error);
@@ -288,6 +303,7 @@ export const useStudio = create<StudioState>((set, get) => {
     busy: false,
     busyLabel: null,
     externalChange: null,
+    diffs: null,
     toasts: [],
     mcp: { running: false },
     welcomeStep: "home",
@@ -600,6 +616,53 @@ export const useStudio = create<StudioState>((set, get) => {
         fail(error);
       } finally {
         set({ busy: false, busyLabel: null });
+      }
+    },
+    importAssets: async (paths) => {
+      if (paths.length === 0) return;
+      set({ busy: true });
+      try {
+        const report = await api.importAssets(paths);
+        set({ assets: report.assets });
+        void get().refreshGraph();
+        if (report.imported.length > 0) {
+          get().toast("success", i18n.t("toast.assetsImported", { count: report.imported.length }));
+        }
+        if (report.skipped.length > 0) {
+          get().toast("error", i18n.t("toast.assetsSkipped", { count: report.skipped.length }));
+        }
+      } catch (error) {
+        fail(error);
+      } finally {
+        set({ busy: false });
+      }
+    },
+    translateProject: async (locale) => {
+      set({ busy: true, busyLabel: i18n.t("busy.translate") });
+      try {
+        const report = await api.translate(locale);
+        if (report.ok) {
+          get().toast("success", i18n.t("toast.translated", { locale, count: report.files }));
+        } else {
+          get().toast("error", report.log.trim().slice(-400) || i18n.t("toast.translateFailed"));
+        }
+      } catch (error) {
+        fail(error);
+      } finally {
+        set({ busy: false, busyLabel: null });
+      }
+    },
+    openExternalDiff: async () => {
+      const change = get().externalChange;
+      if (!change || change.rpy.length === 0) return;
+      const diffs = await guarded(() => api.externalDiff(change.rpy));
+      if (diffs) set({ diffs, modal: "diff" });
+    },
+    retargetEdge: async (args) => {
+      const env = await guarded(() => api.retargetEdge(args));
+      if (env) {
+        applyEnvelope(env);
+        void get().refreshGraph();
       }
     },
     newProject: async (parent, title) => {

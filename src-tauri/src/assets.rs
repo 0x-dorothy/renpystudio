@@ -15,7 +15,7 @@ pub struct AssetInfo {
     pub extension: String,
 }
 
-fn classify(ext: &str) -> &'static str {
+pub fn classify(ext: &str) -> &'static str {
     match ext {
         "png" | "jpg" | "jpeg" | "webp" | "avif" | "svg" | "gif" | "bmp" => "image",
         "ogg" | "opus" | "mp3" | "wav" | "flac" | "m4a" => "audio",
@@ -25,7 +25,86 @@ fn classify(ext: &str) -> &'static str {
     }
 }
 
-/// Scans `game/images`, `game/audio`, `game/fonts`, `game/video` recursively.
+pub fn kind_for_path(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    classify(&ext)
+}
+
+/// Folder inside `game/` that owns this asset kind.
+pub fn target_folder(kind: &str) -> Option<&'static str> {
+    match kind {
+        "image" => Some("images"),
+        "audio" => Some("audio"),
+        "font" => Some("fonts"),
+        "video" => Some("video"),
+        _ => None,
+    }
+}
+
+/// Copies external files into the project without ever overwriting existing assets.
+pub fn import_files(root: &Path, sources: &[PathBuf]) -> (Vec<String>, Vec<String>) {
+    let mut imported = Vec::new();
+    let mut skipped = Vec::new();
+    for source in sources {
+        if !source.is_file() {
+            skipped.push(format!("{}: не файл", source.display()));
+            continue;
+        }
+        let kind = kind_for_path(source);
+        let Some(folder) = target_folder(kind) else {
+            skipped.push(format!("{}: неподдерживаемый тип", source.display()));
+            continue;
+        };
+        let dir = root.join("game").join(folder);
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            skipped.push(format!("{}: {err}", source.display()));
+            continue;
+        }
+        let stem = source
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "asset".into());
+        let ext = source
+            .extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let clean: String = stem
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let clean = clean.trim_matches('_').to_string();
+        let base = if clean.is_empty() { "asset".to_string() } else { clean };
+        let mut candidate = if ext.is_empty() {
+            dir.join(&base)
+        } else {
+            dir.join(format!("{base}.{ext}"))
+        };
+        let mut n = 2;
+        while candidate.exists() {
+            candidate = if ext.is_empty() {
+                dir.join(format!("{base}_{n}"))
+            } else {
+                dir.join(format!("{base}_{n}.{ext}"))
+            };
+            n += 1;
+        }
+        match std::fs::copy(source, &candidate) {
+            Ok(_) => imported.push(relative(root, &candidate)),
+            Err(err) => skipped.push(format!("{}: {err}", source.display())),
+        }
+    }
+    (imported, skipped)
+}
 pub fn scan(root: &Path) -> Vec<AssetInfo> {
     let mut out = Vec::new();
     for folder in ["images", "audio", "fonts", "video", "gui"] {
@@ -115,5 +194,32 @@ pub fn mime_for(ext: &str) -> &'static str {
         "ttf" => "font/ttf",
         "otf" => "font/otf",
         _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_copies_files_and_never_overwrites() {
+        let base = std::env::temp_dir().join(format!("renpy-assets-{}", crate::model::new_id()));
+        let project = base.join("project");
+        let source = base.join("source");
+        std::fs::create_dir_all(project.join("game")).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        let first = source.join("Mira Happy.png");
+        std::fs::write(&first, b"one").unwrap();
+        let second = source.join("mira_happy.png");
+        std::fs::write(&second, b"two").unwrap();
+
+        let (imported, skipped) = import_files(&project, &[first, second]);
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(imported.len(), 2);
+        assert!(imported[0].starts_with("game/images/"));
+        assert_ne!(imported[0], imported[1], "second copy must get a suffix");
+        let bytes = std::fs::read(project.join(&imported[1])).unwrap();
+        assert_eq!(bytes, b"two");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
