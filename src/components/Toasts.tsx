@@ -60,7 +60,7 @@ export function ExternalChangeBanner() {
         <span className="text-[var(--muted)]">
           {t("conflict.externalText")}
           {rpyCount > 0 ? ` · ${rpyCount} .rpy` : ""}
-          {assetCount > 0 ? ` · ${assetCount} ассетов` : ""}
+          {assetCount > 0 ? ` · ${t("conflict.assetsCount", { count: assetCount })}` : ""}
         </span>
       </div>
       <Button size="sm" variant="ghost" onClick={dismiss}>

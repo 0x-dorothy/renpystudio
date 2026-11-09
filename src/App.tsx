@@ -119,7 +119,7 @@ export default function App() {
                 <div className="flex-1" />
                 {project.locales.length > 1 ? (
                   <div className="flex items-center gap-1 text-[11px] text-[var(--muted-2)]">
-                    <span>Язык текста:</span>
+                    <span>{t("app.textLocale")}</span>
                     {project.locales.map((locale) => (
                       <button
                         key={locale}

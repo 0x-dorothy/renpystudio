@@ -97,7 +97,7 @@ export function BlockForm({ node }: { node: StudioNode }) {
   }, [project?.characters, t]);
 
   if (!def) {
-    return <div className="text-[12px] text-[var(--muted)]">Неизвестный блок: {node.kind}</div>;
+    return <div className="text-[12px] text-[var(--muted)]">{t("inspector.unknownBlock", { kind: node.kind })}</div>;
   }
 
   const renderField = (field: FieldDef) => {
@@ -206,7 +206,7 @@ export function BlockForm({ node }: { node: StudioNode }) {
         const current = String(value ?? "");
         const options = [...sceneOptions];
         if (current && !options.some((option) => option.value === current)) {
-          options.unshift({ value: current, label: `метка: ${current}` });
+          options.unshift({ value: current, label: t("field.labelPrefix", { label: current }) });
         }
         return (
           <Field key={field.key} label={t(field.labelKey)} hint={field.hintKey ? t(field.hintKey) : undefined}>
@@ -241,7 +241,7 @@ export function BlockForm({ node }: { node: StudioNode }) {
                 </datalist>
                 <div className="mt-1 text-[10px] text-[var(--muted-2)]">
                   {assets.length > 0
-                    ? `${assets.length} файлов в библиотеке — начните вводить имя`
+                    ? t("assets.libraryHint", { count: assets.length })
                     : t("assets.empty")}
                 </div>
               </div>
@@ -322,7 +322,7 @@ export function BlockForm({ node }: { node: StudioNode }) {
               spellCheck={false}
               value={String(value ?? "")}
               onChange={(event) => update(field.key, event.target.value)}
-              placeholder={"$ renpy.notify(\"Готово\")\nscene bg room with fade"}
+              placeholder={t("field.codePlaceholder")}
             />
           </Field>
         );

@@ -182,7 +182,7 @@ function SceneEditorPanel({ sceneId }: { sceneId: string }) {
           onChange={(event) => setDraft({ ...draft, slug: event.target.value })}
         />
       </Field>
-      <Field label="Метка Ren'Py" hint={`label ${draft.labelName || `scene_${draft.slug}`}`}>
+      <Field label={t("field.labelName")} hint={`label ${draft.labelName || `scene_${draft.slug}`}`}>
         <Input
           className="mono text-[12px]"
           value={draft.labelName ?? ""}

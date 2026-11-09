@@ -9,6 +9,7 @@ pub const STUDIO_DIR: &str = "renpy-studio";
 pub const PROJECT_FILE: &str = "project.json";
 pub const MARKER_FILE: &str = "renpy-studio.rpyproj";
 pub const HISTORY_DIR: &str = "history";
+pub const INDEX_FILE: &str = "index.json";
 pub const MAX_AUTO_SNAPSHOTS: usize = 50;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -291,6 +292,9 @@ impl Store {
             scenes: self.project.scenes.len(),
             blocks: self.project.scenes.iter().map(|s| s.nodes.len()).sum(),
         };
+        let mut index = self.load_index();
+        index.push(info.clone());
+        self.save_index(&index)?;
         self.prune_snapshots()?;
         Ok(info)
     }
@@ -300,11 +304,22 @@ impl Store {
         if !dir.exists() {
             return Ok(vec![]);
         }
-        let mut out = Vec::new();
+        let index = self.load_index();
+        let mut out: Vec<SnapshotInfo> = index
+            .iter()
+            .filter(|info| dir.join(&info.file).is_file())
+            .cloned()
+            .collect();
+        let known: std::collections::HashSet<String> = out.iter().map(|i| i.file.clone()).collect();
+        // Snapshots created by older builds have no index entry: recover them.
         for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if file_name == INDEX_FILE || known.contains(&file_name) {
                 continue;
             }
             let Ok(raw) = fs::read_to_string(&path) else { continue };
@@ -312,7 +327,7 @@ impl Store {
             let meta = snapshot_meta_from_path(&path);
             out.push(SnapshotInfo {
                 id: meta.0,
-                file: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                file: file_name,
                 created_at: meta.1,
                 kind: meta.2,
                 label: meta.3,
@@ -322,7 +337,7 @@ impl Store {
             });
         }
         // Newest first.
-        out.sort_by(|a, b| b.file.cmp(&a.file));
+        out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.file.cmp(&a.file)));
         Ok(out)
     }
 
@@ -338,6 +353,8 @@ impl Store {
         let mut project: Project = serde_json::from_str(raw.trim_start_matches('\u{feff}'))
             .map_err(|e| e.to_string())?;
         migrate(&mut project)?;
+        // Nothing may be lost: keep the current state in history before rolling back.
+        let _ = self.snapshot("pre-rollback", "Перед откатом");
         self.checkpoint();
         self.project = project;
         self.save()?;
@@ -353,25 +370,40 @@ impl Store {
 
     fn prune_snapshots(&self) -> Result<(), String> {
         let Some(dir) = self.history_dir() else { return Ok(()) };
-        let mut autos: Vec<PathBuf> = Vec::new();
-        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let (_, _, kind, _) = snapshot_meta_from_path(&path);
-            if kind == "auto" {
-                autos.push(path);
-            }
-        }
-        autos.sort();
+        let mut index = self.load_index();
+        index.retain(|info| dir.join(&info.file).is_file());
+        let mut autos: Vec<SnapshotInfo> = index
+            .iter()
+            .filter(|info| info.kind == "auto")
+            .cloned()
+            .collect();
+        autos.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         if autos.len() > MAX_AUTO_SNAPSHOTS {
             let excess = autos.len() - MAX_AUTO_SNAPSHOTS;
-            for path in autos.into_iter().take(excess) {
-                let _ = fs::remove_file(path);
+            for info in autos.into_iter().take(excess) {
+                let _ = fs::remove_file(dir.join(&info.file));
+                index.retain(|entry| entry.file != info.file);
             }
         }
+        self.save_index(&index)?;
         Ok(())
+    }
+
+    fn index_path(&self) -> Option<PathBuf> {
+        self.history_dir().map(|dir| dir.join(INDEX_FILE))
+    }
+
+    fn load_index(&self) -> Vec<SnapshotInfo> {
+        let Some(path) = self.index_path() else { return vec![] };
+        let Ok(raw) = fs::read_to_string(path) else { return vec![] };
+        serde_json::from_str(raw.trim_start_matches('\u{feff}')).unwrap_or_default()
+    }
+
+    fn save_index(&self, entries: &[SnapshotInfo]) -> Result<(), String> {
+        let Some(path) = self.index_path() else { return Ok(()) };
+        let mut json = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
+        json.push('\n');
+        write_atomic(&path, json.as_bytes())
     }
 }
 
@@ -415,4 +447,29 @@ fn migrate(project: &mut Project) -> Result<(), String> {
     }
     project.format_version = FORMAT_VERSION;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_index_keeps_labels_and_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "renpy-studio-test-{}",
+            crate::model::new_id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::create(&dir, "Test project").unwrap();
+        let info = store.snapshot("manual", "Перед правкой").unwrap();
+        assert!(dir.join(STUDIO_DIR).join(HISTORY_DIR).join(&info.file).is_file());
+
+        // A fresh store (simulating a restart) must recover the label from the index.
+        let reopened = Store::open(&dir).unwrap();
+        let list = reopened.list_snapshots().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].label, "Перед правкой");
+        assert_eq!(list[0].kind, "manual");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

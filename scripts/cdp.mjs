@@ -1,9 +1,6 @@
-// Minimal Chrome DevTools Protocol client for the Tauri WebView2 window.
-// Usage:
-//   node scripts/cdp.mjs shot out.png
-//   node scripts/cdp.mjs eval "document.title"
-//   node scripts/cdp.mjs click "text=Добавить блок"
-//   node scripts/cdp.mjs wait 1500
+// Dev-only helper: drives the app's WebView2 through the Chrome DevTools Protocol.
+// Start the app with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222
+// then: node scripts/cdp.mjs shot out.png | eval "document.title" | click "text=Граф"
 import { writeFileSync } from "node:fs";
 
 const [, , command, ...rest] = process.argv;
@@ -45,32 +42,13 @@ async function evaluate(expression) {
     awaitPromise: true,
     returnByValue: true,
   });
-  if (response.error) throw new Error(JSON.stringify(response.error));
-  const result = response.result?.result;
   if (response.result?.exceptionDetails) {
     throw new Error(response.result.exceptionDetails.exception?.description ?? "eval failed");
   }
-  return result?.value;
+  return response.result?.result?.value;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function clickExpression(target) {
-  const selector = target.startsWith("text=")
-    ? null
-    : target;
-  const text = target.startsWith("text=") ? target.slice(5) : null;
-  return `(() => {
-    const text = ${JSON.stringify(text)};
-    const selector = ${JSON.stringify(selector)};
-    const nodes = selector ? Array.from(document.querySelectorAll(selector)) : Array.from(document.querySelectorAll('button, [role="button"], .card, .tab'));
-    const el = text ? nodes.find(n => (n.innerText || '').trim().includes(text)) : nodes[0];
-    if (!el) return 'not found';
-    el.scrollIntoView({block: 'center'});
-    el.click();
-    return (el.innerText || el.className).slice(0, 80);
-  })()`;
-}
 
 switch (command) {
   case "shot": {
@@ -79,35 +57,31 @@ switch (command) {
     console.log("saved", rest[0] ?? "shot.png");
     break;
   }
-  case "eval": {
+  case "eval":
     console.log(JSON.stringify(await evaluate(rest.join(" "))));
     break;
-  }
   case "click": {
-    console.log(await evaluate(clickExpression(rest.join(" "))));
+    const target = rest.join(" ");
+    const selector = target.startsWith("text=") ? null : target;
+    const text = target.startsWith("text=") ? target.slice(5) : null;
+    console.log(
+      await evaluate(`(() => {
+        const text = ${JSON.stringify(text)};
+        const selector = ${JSON.stringify(selector)};
+        const nodes = selector ? Array.from(document.querySelectorAll(selector)) : Array.from(document.querySelectorAll('button, [role="button"], .card, .tab'));
+        const el = text ? nodes.find(n => (n.innerText || '').trim().includes(text)) : nodes[0];
+        if (!el) return 'not found';
+        el.click();
+        return (el.innerText || el.className).slice(0, 80);
+      })()`),
+    );
     await sleep(500);
     break;
   }
-  case "type": {
-    const [selector, value] = [rest[0], rest.slice(1).join(" ")];
-    console.log(
-      await evaluate(`(() => {
-        const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return 'not found';
-        const setter = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value').set;
-        setter.call(el, ${JSON.stringify(value)});
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return 'ok';
-      })()`),
-    );
-    await sleep(300);
-    break;
-  }
-  case "wait": {
+  case "wait":
     await sleep(Number(rest[0] ?? 500));
     console.log("waited");
     break;
-  }
   default:
     console.error("unknown command", command);
     process.exit(1);

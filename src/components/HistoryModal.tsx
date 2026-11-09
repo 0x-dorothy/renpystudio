@@ -103,7 +103,7 @@ export function HistoryModal() {
                 <div className="flex items-center justify-between text-[10.5px] text-[var(--muted-2)]">
                   <span>{formatDateTime(snapshot.createdAt)}</span>
                   <span>
-                    {snapshot.scenes} сцен · {snapshot.blocks} блоков
+                    {t("history.counts", { scenes: snapshot.scenes, blocks: snapshot.blocks })}
                   </span>
                 </div>
               </button>

@@ -34,6 +34,7 @@ interface SceneNodeData extends Record<string, unknown> {
 type SceneNodeType = Node<SceneNodeData, "scene">;
 
 function SceneNode({ data, selected }: NodeProps<SceneNodeType>) {
+  const { t } = useTranslation();
   return (
     <div
       className={`w-[200px] rounded-xl border bg-[var(--panel-2)] px-3 py-2 transition-shadow ${
@@ -50,11 +51,11 @@ function SceneNode({ data, selected }: NodeProps<SceneNodeType>) {
         <span className="chip">{data.blocks}</span>
         {data.deadEnd ? (
           <span className="chip chip-warn">
-            <AlertTriangle size={9} /> тупик
+            <AlertTriangle size={9} /> {t("graph.deadEndChip")}
           </span>
         ) : null}
-        {data.unreachable ? <span className="chip">недостижима</span> : null}
-        {data.isStart ? <span className="chip chip-accent">старт</span> : null}
+        {data.unreachable ? <span className="chip">{t("graph.unreachableChip")}</span> : null}
+        {data.isStart ? <span className="chip chip-accent">{t("graph.start")}</span> : null}
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
@@ -153,11 +154,33 @@ function GraphInner() {
         });
       }
     } else {
-      // Blocks with outgoing edges become small nodes.
-      const flowKinds = new Set(["menu", "if"]);
+      // Blocks with outgoing edges become small nodes; in "all" mode labels
+      // are shown too as internal entry points.
+      const flowKinds = detail === "all" ? ["menu", "if", "label"] : ["menu", "if"];
       for (const scene of project.scenes) {
         for (const node of scene.nodes) {
-          if (!flowKinds.has(node.kind)) continue;
+          if (!flowKinds.includes(node.kind)) continue;
+          if (node.kind === "label") {
+            const name = String((node.params as { name?: string }).name ?? "");
+            const id = `label:${node.id}`;
+            flowNodes.push({
+              id,
+              position: { x: 0, y: 0 },
+              data: { label: name || t("block.label"), tone: "#43d9a3" },
+              type: "flow",
+              style: { width: 170 },
+            });
+            g.setNode(id, { width: 170, height: 34 });
+            g.setEdge(`scene:${scene.id}`, id);
+            flowEdges.push({
+              id: `entry:${node.id}`,
+              source: `scene:${scene.id}`,
+              target: id,
+              type: "smoothstep",
+              style: { stroke: "#43d9a3", strokeDasharray: "4 3" },
+            });
+            continue;
+          }
           const outgoing = data.edges.filter((e) => e.nodeId === node.id);
           if (outgoing.length === 0) continue;
           const id = `block:${node.id}`;

@@ -290,7 +290,7 @@ function SettingsModal() {
         </Field>
         <Checkbox
           checked={draft.mcpRequireConfirm}
-          label="Помечать изменения агента в интерфейсе"
+          label={t("settings.mcpMark")}
           onChange={(checked) => commit({ mcpRequireConfirm: checked })}
         />
       </Section>
@@ -350,7 +350,7 @@ function ProjectSection() {
         <Field label={t("common.name")}>
           <Input value={meta.title} onChange={(event) => setMeta({ ...meta, title: event.target.value })} />
         </Field>
-        <Field label="Автор">
+        <Field label={t("common.author")}>
           <Input value={meta.author} onChange={(event) => setMeta({ ...meta, author: event.target.value })} />
         </Field>
       </div>
@@ -687,6 +687,19 @@ function ImportModal() {
           <Button variant="ghost" onClick={close}>
             {t("common.cancel")}
           </Button>
+          {project ? (
+            <Button
+              variant="danger"
+              disabled={!report || report.scenes === 0 || busy}
+              onClick={() => {
+                if (window.confirm(t("import.replaceConfirm"))) {
+                  void importProject(folder, "replace");
+                }
+              }}
+            >
+              {t("import.replace")}
+            </Button>
+          ) : null}
           <Button
             variant="primary"
             disabled={!report || report.scenes === 0 || busy}

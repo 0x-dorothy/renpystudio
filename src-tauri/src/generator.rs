@@ -509,7 +509,7 @@ pub fn generate(project: &Project, opts: &GenOptions) -> GeneratedBundle {
 
         let mut body_written = 0usize;
         for node in &scene.nodes {
-            match emit_node(&mut w, node, scene, project, &labels, &vars, &mut images) {
+            match emit_node(&mut w, node, project, &labels, &vars, &mut images) {
                 Ok(true) => {
                     body_written += 1;
                     w.blank();
@@ -519,6 +519,18 @@ pub fn generate(project: &Project, opts: &GenOptions) -> GeneratedBundle {
             }
         }
         if body_written == 0 {
+            w.stmt(1, "pass");
+            w.blank();
+        }
+        // A scene may end with a `label` block: Ren'Py requires a body for it.
+        let last_statement_is_label = w
+            .lines
+            .iter()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.starts_with("label ") && line.trim_end().ends_with(':'))
+            .unwrap_or(false);
+        if last_statement_is_label {
             w.stmt(1, "pass");
             w.blank();
         }
@@ -881,7 +893,6 @@ fn align_factor(align: &str) -> &'static str {
 fn emit_node(
     w: &mut Writer,
     node: &Node,
-    scene: &Scene,
     project: &Project,
     labels: &SceneLabels,
     vars: &HashMap<String, String>,
@@ -1292,8 +1303,6 @@ fn emit_node(
         let end = w.lines.len() as u32;
         w.anchors.push((node.id.clone(), start, end.max(start)));
     }
-    // Keep the scene id referenced so unused-variable lints stay quiet.
-    let _ = scene;
     Ok(emitted)
 }
 
@@ -1491,6 +1500,23 @@ mod tests {
             .find(|f| f.path == "game/script_entry.rpy")
             .expect("entry");
         assert!(!entry.content.contains("label start:"));
+    }
+
+    #[test]
+    fn scene_ending_with_label_gets_a_body() {
+        let mut project = sample_project();
+        project.scenes[1].nodes.push(Node::new(
+            NodeKind::LABEL,
+            json!({ "name": "door_entry" }),
+        ));
+        let bundle = generate(&project, &GenOptions::default());
+        let script = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/script_door.rpy")
+            .expect("scene file");
+        assert!(script.content.contains("label door_entry:"));
+        assert!(script.content.trim_end().ends_with("pass") || script.content.contains("label door_entry:\n\n    pass"));
     }
 
     #[test]

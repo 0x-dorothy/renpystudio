@@ -18,6 +18,7 @@ export function AssetSelect({
   onChange: (value: string | null) => void;
   allowEmpty?: boolean;
 }) {
+  const { t } = useTranslation();
   const assets = useStudio((s) => s.assets);
   const list = useMemo(() => assets.filter((a) => a.kind === kind), [assets, kind]);
   const current = value ?? "";
@@ -42,7 +43,7 @@ export function AssetSelect({
           </option>
         ))}
         {current && !list.some((asset) => asset.path === current) ? (
-          <option value={current}>{current} (нет в библиотеке)</option>
+          <option value={current}>{t("assets.notInLibrary", { path: current })}</option>
         ) : null}
       </select>
     </div>
@@ -125,7 +126,7 @@ export function ScreensTab() {
             {cfg.template === "classic" ? (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--muted)]">
                 <Sparkles size={14} className="mt-0.5 text-[var(--accent)]" />
-                {t("screens.template.classic")} — используется стандартный экран Ren'Py из screens.rpy.
+                {t("screens.classicHint")}
               </div>
             ) : null}
 

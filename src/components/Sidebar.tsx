@@ -52,7 +52,7 @@ export function Sidebar() {
   const addCharacter = () => {
     const character: Character = {
       id: newId(),
-      name: t("characters.title") + " " + (project.characters.length + 1),
+      name: t("characters.newName", { n: project.characters.length + 1 }),
       kind: "character",
       color: "#e96aa5",
       avatar: null,

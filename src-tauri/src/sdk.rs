@@ -273,6 +273,24 @@ impl SdkService {
             if trimmed.is_empty() || trimmed.starts_with("Lint") || trimmed.starts_with("Statistics") {
                 continue;
             }
+            // Syntax errors are printed as: File "game/x.rpy", line 12: message
+            if let Some(rest) = trimmed.strip_prefix("File \"") {
+                if let Some((file, rest2)) = rest.split_once("\", line ") {
+                    let digits: String = rest2.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if !digits.is_empty() {
+                        report.problems.push(LintProblem {
+                            file: file.replace('\\', "/"),
+                            line: digits.parse::<u32>().unwrap_or(0),
+                            message: rest2[digits.len()..]
+                                .trim_start_matches(':')
+                                .trim()
+                                .to_string(),
+                            severity: "error".into(),
+                        });
+                        continue;
+                    }
+                }
+            }
             if let Some(colon) = trimmed.find(".rpy:") {
                 let file = trimmed[..colon + 4].to_string();
                 let rest = &trimmed[colon + 5..];

@@ -652,10 +652,11 @@ pub fn scene_update(
         }
         if let Some(label_name) = label_name {
             let cleaned = label_name.trim().to_string();
-            scene.label_name = if cleaned.is_empty() {
-                None
-            } else {
+            let has_word = cleaned.chars().any(|c| c.is_alphanumeric());
+            scene.label_name = if has_word {
                 Some(crate::model::slugify(&cleaned))
+            } else {
+                None
             };
         }
     }

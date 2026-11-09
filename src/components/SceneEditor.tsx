@@ -204,7 +204,7 @@ function BlockCard({
             {def ? t(def.labelKey) : node.kind}
           </span>
           {node.source === "mcp" ? <span className="chip chip-accent">MCP</span> : null}
-          {node.locked ? <span className="chip chip-warn">код</span> : null}
+          {node.locked ? <span className="chip chip-warn">{t("scene.codeChip")}</span> : null}
         </div>
         <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-[var(--muted)]">
           {summary || <span className="text-[var(--muted-2)]">{t("summary.empty")}</span>}

@@ -8,7 +8,7 @@ rust-version = "1.77"
 
 [features]
 default = []
-# Console subsystem for headless commands (`--new`, `--export`, `--lint`).
+# Console subsystem for headless commands (`--new`, `--import`, `--export`, `--lint`).
 cli = []
 
 [build-dependencies]
@@ -24,14 +24,9 @@ uuid = { version = "1", features = ["v7", "serde"] }
 notify = "8"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util"] }
-anyhow = "1"
-thiserror = "2"
 walkdir = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
-base64 = "0.22"
-tracing = "0.1"
-sysinfo = "0.37"
 
 [profile.release]
 codegen-units = 1

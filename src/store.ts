@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
-import { setLanguage } from "./i18n";
+import i18n, { setLanguage } from "./i18n";
 import type {
   AssetInfo,
   Bootstrap,
@@ -70,7 +70,7 @@ interface StudioState {
   welcomeStep: "home" | "new" | "open";
 
   init: () => Promise<void>;
-  applyEnvelope: (env: StateEnvelope, opts?: { keepSelection?: boolean }) => void;
+  applyEnvelope: (env: StateEnvelope, opts?: { reset?: boolean }) => void;
   refreshGraph: () => Promise<void>;
   refreshAssets: () => Promise<void>;
   refreshSnapshots: () => Promise<void>;
@@ -169,21 +169,24 @@ const errText = (error: unknown): string =>
   typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
 
 export const useStudio = create<StudioState>((set, get) => {
-  const applyEnvelope = (env: StateEnvelope, opts?: { keepSelection?: boolean }) => {
+  const applyEnvelope = (env: StateEnvelope, opts?: { reset?: boolean }) => {
     const project = env.project;
     const known = (id: string | null) => !!id && project.scenes.some((s) => s.id === id);
-    const activeSceneId = opts?.keepSelection && known(get().activeSceneId)
-      ? get().activeSceneId
-      : project.meta.startScene && project.scenes.some((s) => s.id === project.meta.startScene)
-        ? project.meta.startScene
-        : project.scenes[0]?.id ?? null;
+    const reset = opts?.reset === true;
+    const activeSceneId =
+      !reset && known(get().activeSceneId)
+        ? (get().activeSceneId as string)
+        : project.meta.startScene && project.scenes.some((s) => s.id === project.meta.startScene)
+          ? project.meta.startScene
+          : (project.scenes[0]?.id ?? null);
+    const activeScene = project.scenes.find((s) => s.id === activeSceneId) ?? null;
+    const nodeExists = !!get().selectedNodeId && !!activeScene?.nodes.some((n) => n.id === get().selectedNodeId);
     set({
       project,
       status: env.status,
       issues: env.issues,
       activeSceneId,
-      selectedNodeId:
-        opts?.keepSelection && known(activeSceneId) ? get().selectedNodeId : null,
+      selectedNodeId: reset ? null : nodeExists ? get().selectedNodeId : null,
     });
   };
 
@@ -226,7 +229,7 @@ export const useStudio = create<StudioState>((set, get) => {
         mcp: { running: boot.mcpRunning, port: boot.mcpPort ?? undefined },
       });
       if (boot.project) {
-        applyEnvelope(boot.project);
+        applyEnvelope(boot.project, { reset: true });
         set({ editLocale: boot.project.project.meta.defaultLocale || boot.settings.locale });
         void get().refreshAssets();
         void get().refreshGraph();
@@ -239,7 +242,7 @@ export const useStudio = create<StudioState>((set, get) => {
       void listen<{ reason: string }>("studio://project-changed", async (event) => {
         if (event.payload?.reason === "mcp") {
           await get().refreshState();
-          get().toast("info", "Проект изменён через MCP");
+          get().toast("info", i18n.t("toast.mcpChanged"));
         }
       });
       void listen<{ at: string }>("studio://saved", (event) => {
@@ -255,7 +258,7 @@ export const useStudio = create<StudioState>((set, get) => {
   const refreshState = async () => {
     try {
       const env = await api.projectState();
-      if (env) applyEnvelope(env, { keepSelection: true });
+      if (env) applyEnvelope(env);
     } catch {
       /* ignore */
     }
@@ -354,13 +357,13 @@ export const useStudio = create<StudioState>((set, get) => {
     },
 
     run: async () => {
-      set({ busy: true, busyLabel: "Запуск игры…" });
+      set({ busy: true, busyLabel: i18n.t("busy.run") });
       try {
         const result = await api.run();
         if (!result.ok) {
           get().toast("error", result.message);
         } else {
-          get().toast("success", "Игра запущена");
+          get().toast("success", i18n.t("toast.runStarted"));
         }
       } catch (error) {
         fail(error);
@@ -370,14 +373,14 @@ export const useStudio = create<StudioState>((set, get) => {
     },
     stop: async () => {
       const stopped = await guarded(() => api.stop());
-      if (stopped) get().toast("info", "Игра остановлена");
+      if (stopped) get().toast("info", i18n.t("action.stopped"));
     },
     lintProject: async () => {
-      set({ busy: true, busyLabel: "Проверка SDK…" });
+      set({ busy: true, busyLabel: i18n.t("busy.lint") });
       try {
         const lint = await api.lint();
         set({ lint, modal: "lint" });
-        if (lint.report.problems.length === 0) get().toast("success", "Проверка пройдена");
+        if (lint.report.problems.length === 0) get().toast("success", i18n.t("toast.lintOk"));
       } catch (error) {
         fail(error);
       } finally {
@@ -385,15 +388,15 @@ export const useStudio = create<StudioState>((set, get) => {
       }
     },
     exportProject: async (force = false) => {
-      set({ busy: true, busyLabel: "Экспорт .rpy…" });
+      set({ busy: true, busyLabel: i18n.t("busy.export") });
       try {
         const report = await api.exportProject(force);
         set({ lastReport: report });
         if (report.conflicts.length > 0) {
           set({ modal: "conflicts" });
-          get().toast("error", `Конфликтов: ${report.conflicts.length}`);
+          get().toast("error", i18n.t("toast.conflicts", { count: report.conflicts.length }));
         } else {
-          get().toast("success", `Экспортировано: ${report.written.length} файлов`);
+          get().toast("success", i18n.t("toast.exported", { count: report.written.length }));
         }
       } catch (error) {
         fail(error);
@@ -402,11 +405,11 @@ export const useStudio = create<StudioState>((set, get) => {
       }
     },
     buildRelease: async (pkg) => {
-      set({ busy: true, busyLabel: "Сборка релиза…" });
+      set({ busy: true, busyLabel: i18n.t("busy.build") });
       try {
         const report = await api.build(pkg);
-        if (report.ok) get().toast("success", `Сборка готова: ${report.artifact ?? "dist"}`);
-        else get().toast("error", report.log.slice(-400) || "Сборка не удалась");
+        if (report.ok) get().toast("success", i18n.t("toast.buildDone", { artifact: report.artifact ?? "dist" }));
+        else get().toast("error", report.log.slice(-400) || i18n.t("toast.buildFailed"));
       } catch (error) {
         fail(error);
       } finally {
@@ -415,10 +418,10 @@ export const useStudio = create<StudioState>((set, get) => {
     },
 
     createScene: async (title, index) => {
+      const before = new Set((get().project?.scenes ?? []).map((s) => s.id));
       await applyProject(() => api.createScene(title, index));
-      const project = get().project;
-      const created = project?.scenes[project.scenes.length - 1];
-      if (created) set({ activeSceneId: created.id, tab: "scene" });
+      const created = get().project?.scenes.find((s) => !before.has(s.id));
+      if (created) set({ activeSceneId: created.id, selectedNodeId: null, tab: "scene" });
     },
     updateScene: async (sceneId, patch) => {
       await applyProject(() => api.updateScene(sceneId, patch));
@@ -434,17 +437,20 @@ export const useStudio = create<StudioState>((set, get) => {
     },
     setStartScene: async (sceneId) => {
       await applyProject(() => api.setStartScene(sceneId));
-      get().toast("success", "Стартовая сцена обновлена");
+      get().toast("success", i18n.t("toast.startUpdated"));
     },
 
     addNode: async (kind, index) => {
       const sceneId = get().activeSceneId;
       if (!sceneId) return;
+      const before = new Set(
+        get().project?.scenes.find((s) => s.id === sceneId)?.nodes.map((n) => n.id) ?? [],
+      );
       const env = await guarded(() => api.addNode(sceneId, kind, index));
       if (env) {
         applyEnvelope(env);
         const scene = env.project.scenes.find((s) => s.id === sceneId);
-        const inserted = scene?.nodes[(index ?? (scene?.nodes.length ?? 1)) - 1] ?? null;
+        const inserted = scene?.nodes.find((n) => !before.has(n.id)) ?? null;
         set({ selectedNodeId: inserted?.id ?? null });
         if (get().tab === "graph") void get().refreshGraph();
       }
@@ -454,7 +460,7 @@ export const useStudio = create<StudioState>((set, get) => {
       if (!sceneId) return;
       const env = await guarded(() => api.updateNode(sceneId, nodeId, params));
       if (env) {
-        applyEnvelope(env, { keepSelection: true });
+        applyEnvelope(env);
         if (get().tab === "graph") void get().refreshGraph();
       }
     },
@@ -467,7 +473,13 @@ export const useStudio = create<StudioState>((set, get) => {
     duplicateNode: async (nodeId) => {
       const sceneId = get().activeSceneId;
       if (!sceneId) return;
+      const before = new Set(
+        get().project?.scenes.find((s) => s.id === sceneId)?.nodes.map((n) => n.id) ?? [],
+      );
       await applyProject(() => api.duplicateNode(sceneId, nodeId));
+      const scene = get().project?.scenes.find((s) => s.id === sceneId);
+      const copy = scene?.nodes.find((n) => !before.has(n.id));
+      if (copy) set({ selectedNodeId: copy.id });
     },
     moveNode: async (nodeId, toIndex) => {
       const sceneId = get().activeSceneId;
@@ -502,46 +514,46 @@ export const useStudio = create<StudioState>((set, get) => {
         setLanguage(saved.locale);
         applyTheme(saved);
         set({ settings: saved });
-        get().toast("success", "Настройки сохранены");
+        get().toast("success", i18n.t("settings.saved"));
       }
     },
     detectSdk: async (force = false) => {
       const info = await guarded(() => api.detectSdk(force));
       if (info) {
         set({ sdk: info });
-        get().toast("success", `SDK: ${info.version}`);
+        get().toast("success", i18n.t("settings.sdkUpdated", { version: info.version }));
       } else {
-        get().toast("error", "Ren'Py SDK не найден. Укажите папку вручную.");
+        get().toast("error", i18n.t("error.sdkMissing"));
       }
     },
     setSdkPath: async (path) => {
       const info = await guarded(() => api.setSdkPath(path));
       if (info) {
         set({ sdk: info });
-        get().toast("success", `SDK: ${info.version}`);
+        get().toast("success", i18n.t("settings.sdkUpdated", { version: info.version }));
       } else if (path) {
-        get().toast("error", "В выбранной папке нет renpy.exe");
+        get().toast("error", i18n.t("error.sdkNoExe"));
       }
     },
     startMcp: async (port) => {
       const result = await guarded(() => api.mcpStart(port));
       if (result) {
         set({ mcp: { running: true, port: result.port, url: `http://127.0.0.1:${result.port}/mcp` } });
-        get().toast("success", `MCP-сервер: http://127.0.0.1:${result.port}/mcp`);
+        get().toast("success", i18n.t("toast.mcpStarted", { url: `http://127.0.0.1:${result.port}/mcp` }));
       }
     },
     stopMcp: async () => {
       const result = await guarded(() => api.mcpStop());
       if (result) {
         set({ mcp: { running: false } });
-        get().toast("info", "MCP-сервер остановлен");
+        get().toast("info", i18n.t("toast.mcpStopped"));
       }
     },
 
     takeSnapshot: async (label) => {
-      const info = await guarded(() => api.snapshot(label || "Снимок"));
+      const info = await guarded(() => api.snapshot(label || i18n.t("history.snapshot")));
       if (info) {
-        get().toast("success", "Снимок создан");
+        get().toast("success", i18n.t("toast.snapshot"));
         void get().refreshSnapshots();
       }
     },
@@ -551,7 +563,7 @@ export const useStudio = create<StudioState>((set, get) => {
         applyEnvelope(env);
         void get().refreshSnapshots();
         void get().refreshGraph();
-        get().toast("success", "Проект восстановлен из снимка");
+        get().toast("success", i18n.t("toast.restored"));
       }
     },
     diffSnapshot: async (file) => {
@@ -566,14 +578,14 @@ export const useStudio = create<StudioState>((set, get) => {
     openProject: async (path) => {
       const env = await guarded(() => api.openProject(path));
       if (env) {
-        applyEnvelope(env);
+        applyEnvelope(env, { reset: true });
         set({ tab: "scene", welcomeStep: "home", editLocale: env.project.meta.defaultLocale || "ru" });
         void get().refreshAssets();
         void get().refreshGraph();
       }
     },
     importProject: async (path, mode) => {
-      set({ busy: true, busyLabel: "Импорт .rpy…" });
+      set({ busy: true, busyLabel: i18n.t("busy.import") });
       try {
         const payload = await api.importApply(path, mode);
         await get().refreshState();
@@ -582,7 +594,7 @@ export const useStudio = create<StudioState>((set, get) => {
         set({ modal: "none", tab: "scene" });
         get().toast(
           "success",
-          `Импортировано: ${payload.report.scenes} сцен, ${payload.report.recognized} блоков`,
+          i18n.t("toast.imported", { scenes: payload.report.scenes, blocks: payload.report.recognized }),
         );
       } catch (error) {
         fail(error);
@@ -591,14 +603,14 @@ export const useStudio = create<StudioState>((set, get) => {
       }
     },
     newProject: async (parent, title) => {
-      set({ busy: true, busyLabel: "Создаю проект…" });
+      set({ busy: true, busyLabel: i18n.t("busy.create") });
       try {
         const env = await api.newProject(parent, title);
-        applyEnvelope(env);
+        applyEnvelope(env, { reset: true });
         set({ tab: "scene", modal: "none", welcomeStep: "home" });
         void get().refreshAssets();
         void get().refreshGraph();
-        get().toast("success", "Проект создан");
+        get().toast("success", i18n.t("toast.projectCreated"));
       } catch (error) {
         fail(error);
       } finally {
@@ -621,11 +633,11 @@ export const useStudio = create<StudioState>((set, get) => {
     reloadProject: async () => {
       const env = await guarded(() => api.reload());
       if (env) {
-        applyEnvelope(env, { keepSelection: true });
+        applyEnvelope(env);
         set({ externalChange: null });
         void get().refreshAssets();
         void get().refreshGraph();
-        get().toast("success", "Проект перечитан с диска");
+        get().toast("success", i18n.t("toast.reloaded"));
       }
     },
     focusIssue: (issue) => {

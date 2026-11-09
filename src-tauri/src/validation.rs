@@ -83,9 +83,33 @@ fn known_labels(project: &Project) -> (HashSet<String>, HashMap<String, String>)
                     known.insert(name);
                 }
             }
+            for target in code_jump_targets(node) {
+                known.insert(target);
+            }
         }
     }
     (known, labels)
+}
+
+/// `jump` statements preserved inside a manual code block.
+fn code_jump_targets(node: &Node) -> Vec<String> {
+    if node.kind != NodeKind::CODE {
+        return Vec::new();
+    }
+    let params: CodeParams = node.typed();
+    let mut out = Vec::new();
+    for line in params.code.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("jump ") {
+            if let Some(target) = rest.split_whitespace().next() {
+                let cleaned = target.trim_end_matches(':').trim();
+                if !cleaned.is_empty() {
+                    out.push(cleaned.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Validates structure, references and assets.
@@ -348,6 +372,8 @@ pub fn validate(project: &Project, assets: &[AssetInfo]) -> ValidationReport {
                         report.issues
                             .push(Issue::info("empty-code", "Пустой блок кода.").at(&scene.id, Some(&node.id)));
                     }
+                    // Jumps preserved inside manual code still count as outgoing flow.
+                    outgoing += code_jump_targets(node).len();
                 }
                 _ => {}
             }
@@ -375,6 +401,10 @@ pub fn validate(project: &Project, assets: &[AssetInfo]) -> ValidationReport {
         .filter(|id| project.scene_by_id(id).is_some())
         .or_else(|| project.scenes.first().map(|s| s.id.clone()));
     if let Some(start) = start {
+        let reverse: HashMap<String, String> = labels
+            .iter()
+            .map(|(id, label)| (label.clone(), id.clone()))
+            .collect();
         let mut seen: HashSet<String> = HashSet::new();
         let mut queue: VecDeque<String> = VecDeque::new();
         queue.push_back(start.clone());
@@ -395,6 +425,10 @@ pub fn validate(project: &Project, assets: &[AssetInfo]) -> ValidationReport {
                         let p: IfParams = node.typed();
                         [p.then_target, p.else_target].into_iter().flatten().collect()
                     }
+                    NodeKind::CODE => code_jump_targets(node)
+                        .into_iter()
+                        .filter_map(|target| reverse.get(&target).cloned())
+                        .collect(),
                     _ => vec![],
                 };
                 for target in targets {
@@ -449,6 +483,11 @@ pub struct GraphData {
 
 pub fn graph_data(project: &Project) -> GraphData {
     let report = validate(project, &[]);
+    let labels = scene_labels(project);
+    let reverse: HashMap<String, String> = labels
+        .iter()
+        .map(|(id, label)| (label.clone(), id.clone()))
+        .collect();
     let mut edges = Vec::new();
     let mut node_counts = HashMap::new();
     for scene in &project.scenes {
@@ -517,6 +556,21 @@ pub fn graph_data(project: &Project) -> GraphData {
                             node_id: node.id.clone(),
                             condition: Some(cond),
                         });
+                    }
+                }
+                NodeKind::CODE => {
+                    for target in code_jump_targets(node) {
+                        if let Some(scene_id) = reverse.get(&target) {
+                            edges.push(GraphEdge {
+                                id: format!("{}:code:{scene_id}", node.id),
+                                from_scene: scene.id.clone(),
+                                to_scene: Some(scene_id.clone()),
+                                kind: "jump".into(),
+                                label: String::new(),
+                                node_id: node.id.clone(),
+                                condition: None,
+                            });
+                        }
                     }
                 }
                 _ => {}
