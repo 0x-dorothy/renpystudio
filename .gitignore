@@ -9,3 +9,5 @@ src-tauri/gen/
 !src/**/*.png
 .DS_Store
 .vite/
+plugins/
+
