@@ -1436,7 +1436,7 @@ fn pointclick_screen(
             1,
             format!(
                 "text {} xalign 0.5 yalign 0.06 size 30 color \"#f5f3ff\" outlines [(2, \"#000000b0\", 0, 0)]",
-                rpy_text(&prompt, true)
+                rpy_text(prompt, true)
             ),
         );
     }
@@ -1501,7 +1501,7 @@ fn pointclick_screen(
         );
         push(2, action);
         if !label_text.trim().is_empty() {
-            push(2, format!("tooltip {}", rpy_string(&label_text)));
+            push(2, format!("tooltip {}", rpy_string(label_text)));
         }
         if hotspot.shape == "polygon" && hotspot.points.len() >= 3 {
             let points = hotspot
@@ -1717,7 +1717,7 @@ mod tests {
         assert!(script.content.contains("menu:"));
         assert!(script.content.contains("jump scene_door"));
         // Anchor comments must be present so lint problems map back to blocks.
-        assert!(script.content.contains("Показать спрайт") == false);
+        assert!(!script.content.contains("Показать спрайт"));
         let entry = bundle
             .files
             .iter()

@@ -461,7 +461,7 @@ impl<'a> Parser<'a> {
         start: usize,
         end: usize,
         base: usize,
-        previous: &mut Vec<Node>,
+        previous: &mut [Node],
     ) -> Option<Node> {
         let trimmed = text.trim_end();
         // --- control flow -------------------------------------------------
@@ -634,7 +634,7 @@ impl<'a> Parser<'a> {
         }
         if trimmed == "pause" || trimmed.starts_with("pause ") {
             let tokens: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
-            let hard = tokens.iter().any(|t| *t == "hard");
+            let hard = tokens.contains(&"hard");
             let seconds = tokens
                 .iter()
                 .find_map(|t| t.parse::<f32>().ok())
@@ -770,13 +770,9 @@ impl<'a> Parser<'a> {
                     continue;
                 }
             }
-            let Some(colon) = text.rfind(':') else {
-                return None;
-            };
+            let colon = text.rfind(':')?;
             let head = text[..colon].trim();
-            let Some((label_text, rest)) = parse_string(head) else {
-                return None;
-            };
+            let (label_text, rest) = parse_string(head)?;
             let condition = rest
                 .trim()
                 .strip_prefix("if ")
@@ -853,9 +849,7 @@ impl<'a> Parser<'a> {
         if then_body.len() != 1 {
             return None;
         }
-        let Some(then_target) = then_body[0].text.strip_prefix("jump ") else {
-            return None;
-        };
+        let then_target = then_body[0].text.strip_prefix("jump ")?;
         let then_target = then_target.split_whitespace().next()?.to_string();
 
         let mut has_else = false;
@@ -1272,3 +1266,411 @@ pub fn collect_sources(root: &std::path::Path) -> Result<(Vec<ImportInput>, Vec<
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct Unused;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unique scratch folder in the OS temp dir (removed by each test).
+    fn scratch_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("renpy-importer-{}", crate::model::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn parse_one(content: &str) -> (Project, ImportReport) {
+        import(
+            &[ImportInput {
+                path: "script.rpy".into(),
+                content: content.to_string(),
+            }],
+            "Тест",
+            "test",
+        )
+    }
+
+    fn kinds(scene: &Scene) -> Vec<&str> {
+        scene.nodes.iter().map(|n| n.kind.as_str()).collect()
+    }
+
+    /// Joins script lines so indentation stays explicit and visible.
+    fn src(lines: &[&str]) -> String {
+        let mut out = lines.join("\n");
+        out.push('\n');
+        out
+    }
+
+    fn scene_by_label<'a>(project: &'a Project, label: &str) -> &'a Scene {
+        project
+            .scenes
+            .iter()
+            .find(|s| s.label_name.as_deref() == Some(label))
+            .unwrap_or_else(|| panic!("сцена с меткой {label} не найдена"))
+    }
+
+    #[test]
+    fn parses_simple_scene_into_blocks() {
+        let (project, report) = parse_one(
+            "label start:\n    scene bg room with fade\n    show mira happy at left\n    mira \"Привет, мир!\"\n    \"Это наррация.\"\n    return\n",
+        );
+
+        assert_eq!(report.scenes, 1);
+        assert_eq!(report.files, 1);
+        assert_eq!(report.code_blocks, 0);
+        assert_eq!(report.recognized, 5);
+
+        let scene = &project.scenes[0];
+        assert_eq!(scene.label_name.as_deref(), Some("start"));
+        assert_eq!(scene.title, "Start");
+        assert_eq!(scene.slug, "start");
+        assert_eq!(
+            kinds(scene),
+            vec![
+                NodeKind::SCENE,
+                NodeKind::SHOW,
+                NodeKind::SAY,
+                NodeKind::NARRATE,
+                NodeKind::RETURN,
+            ]
+        );
+
+        let bg: SceneParams = scene.nodes[0].typed();
+        assert_eq!(bg.bg, "bg room");
+        assert_eq!(bg.transition.as_deref(), Some("fade"));
+
+        let show: ShowParams = scene.nodes[1].typed();
+        assert_eq!(show.who, "mira");
+        assert_eq!(show.image.as_deref(), Some("happy"));
+        assert_eq!(show.position, Position::Left);
+
+        let say: SayParams = scene.nodes[2].typed();
+        assert_eq!(
+            say.who.as_deref(),
+            Some(project.characters[0].id.as_str()),
+            "реплика должна ссылаться на восстановленного персонажа"
+        );
+        assert_eq!(say.text.get("ru").map(String::as_str), Some("Привет, мир!"));
+        assert_eq!(say.text.get("en").map(String::as_str), Some("Привет, мир!"));
+
+        let narrate: NarrateParams = scene.nodes[3].typed();
+        assert_eq!(
+            narrate.text.get("ru").map(String::as_str),
+            Some("Это наррация.")
+        );
+
+        // `label start` becomes the project entry point.
+        assert_eq!(project.meta.start_scene.as_deref(), Some(scene.id.as_str()));
+        // A speaking variable with no `define` is restored from the line itself.
+        assert_eq!(project.characters.len(), 1);
+        assert_eq!(project.characters[0].sprite_prefix.as_deref(), Some("mira"));
+    }
+
+    #[test]
+    fn reads_characters_from_define() {
+        let content = src(&[
+            "define m = Character(\"Мира\", color=\"#e96aa5\", image=\"mira\")",
+            "define s = Character(\"Страж\", color=\"#4a6fa5\", what_prefix=\"(\", what_suffix=\")\")",
+            "",
+            "label start:",
+            "    m \"Реплика Миры.\"",
+            "    s \"Реплика стража.\"",
+        ]);
+        let (project, report) = parse_one(&content);
+
+        assert_eq!(report.characters, 2);
+        assert_eq!(project.characters.len(), 2);
+
+        let mira = project
+            .characters
+            .iter()
+            .find(|c| c.name == "Мира")
+            .expect("персонаж «Мира» не найден");
+        assert_eq!(mira.color.as_deref(), Some("#e96aa5"));
+        assert_eq!(mira.sprite_prefix.as_deref(), Some("mira"));
+        assert_eq!(mira.kind, CharacterKind::Character);
+
+        let guard = project
+            .characters
+            .iter()
+            .find(|c| c.name == "Страж")
+            .expect("персонаж «Страж» не найден");
+        assert_eq!(guard.prefix.as_deref(), Some("("));
+        assert_eq!(guard.suffix.as_deref(), Some(")"));
+        assert_eq!(guard.sprite_prefix.as_deref(), Some("s"));
+
+        // Dialogue reuses the defined character instead of inventing a new one.
+        let scene = scene_by_label(&project, "start");
+        let say: SayParams = scene.nodes[0].typed();
+        assert_eq!(say.who.as_deref(), Some(mira.id.as_str()));
+    }
+
+    #[test]
+    fn reads_default_variables_and_ignores_duplicates() {
+        let (project, report) = import(
+            &[
+                ImportInput {
+                    path: "a.rpy".into(),
+                    content: "default trust = 0\ndefault seen_intro = False\ndefault player_name = \"Гость\"\n\nlabel start:\n    return\n".into(),
+                },
+                ImportInput {
+                    path: "b.rpy".into(),
+                    content: "default trust = 5\n".into(),
+                },
+            ],
+            "Тест",
+            "test",
+        );
+
+        assert_eq!(report.variables, 3);
+        assert_eq!(project.variables.len(), 3);
+
+        let trust = project
+            .variables
+            .iter()
+            .find(|v| v.name == "trust")
+            .expect("переменная trust не найдена");
+        assert_eq!(trust.var_type, VarType::Number);
+        assert_eq!(trust.default.as_f64(), Some(0.0), "первое объявление побеждает");
+
+        let flag = project
+            .variables
+            .iter()
+            .find(|v| v.name == "seen_intro")
+            .expect("переменная seen_intro не найдена");
+        assert_eq!(flag.var_type, VarType::Bool);
+        assert_eq!(flag.default.as_bool(), Some(false));
+
+        let name = project
+            .variables
+            .iter()
+            .find(|v| v.name == "player_name")
+            .expect("переменная player_name не найдена");
+        assert_eq!(name.var_type, VarType::Text);
+        assert_eq!(name.default.as_str(), Some("Гость"));
+    }
+
+    #[test]
+    fn parses_menu_with_condition_and_targets() {
+        let content = src(&[
+            "default trust = 0",
+            "",
+            "label start:",
+            "    menu:",
+            "        \"Что делать?\"",
+            "        \"Открыть дверь\" if trust >= 2:",
+            "            $ trust += 1",
+            "            jump door",
+            "        \"Уйти\":",
+            "            jump fin",
+            "",
+            "label door:",
+            "    return",
+            "",
+            "label fin:",
+            "    return",
+        ]);
+        let (project, report) = parse_one(&content);
+
+        assert_eq!(report.scenes, 3);
+        assert_eq!(report.code_blocks, 0);
+
+        let start = scene_by_label(&project, "start");
+        assert_eq!(kinds(start), vec![NodeKind::MENU]);
+
+        let menu: MenuParams = start.nodes[0].typed();
+        assert!(menu.with_caption);
+        assert_eq!(menu.prompt.get("ru").map(String::as_str), Some("Что делать?"));
+        assert_eq!(menu.options.len(), 2);
+
+        let open = &menu.options[0];
+        assert_eq!(open.text.get("ru").map(String::as_str), Some("Открыть дверь"));
+        assert_eq!(open.condition.as_deref(), Some("trust >= 2"));
+        assert_eq!(open.set_vars.len(), 1);
+        assert_eq!(open.set_vars[0].variable, "trust");
+        assert_eq!(open.set_vars[0].op, "add");
+        assert_eq!(open.set_vars[0].value.as_f64(), Some(1.0));
+
+        let leave = &menu.options[1];
+        assert_eq!(leave.condition, None);
+        assert!(leave.set_vars.is_empty());
+
+        // Pass 3 rewrites label names to scene ids so jumps survive renaming.
+        assert_eq!(
+            open.target.as_deref(),
+            Some(scene_by_label(&project, "door").id.as_str())
+        );
+        assert_eq!(
+            leave.target.as_deref(),
+            Some(scene_by_label(&project, "fin").id.as_str())
+        );
+    }
+
+    #[test]
+    fn handles_bom_and_crlf() {
+        let (project, report) =
+            parse_one("\u{feff}label start:\r\n\t\"Привет из BOM-файла.\"\r\n\treturn\r\n");
+
+        assert_eq!(report.scenes, 1);
+        assert_eq!(report.code_blocks, 0);
+        let scene = &project.scenes[0];
+        assert_eq!(scene.label_name.as_deref(), Some("start"));
+        assert_eq!(kinds(scene), vec![NodeKind::NARRATE, NodeKind::RETURN]);
+        let narrate: NarrateParams = scene.nodes[0].typed();
+        assert_eq!(
+            narrate.text.get("ru").map(String::as_str),
+            Some("Привет из BOM-файла.")
+        );
+    }
+
+    #[test]
+    fn collect_sources_skips_translations_and_cache() {
+        let base = scratch_dir();
+        let game = base.join("game");
+        std::fs::create_dir_all(game.join("chapters")).unwrap();
+        std::fs::create_dir_all(game.join("tl").join("russian")).unwrap();
+        std::fs::create_dir_all(game.join("cache")).unwrap();
+
+        std::fs::write(game.join("script.rpy"), "label start:\n    return\n").unwrap();
+        std::fs::write(
+            game.join("chapters").join("chapter1.rpy"),
+            "label ch1:\n    return\n",
+        )
+        .unwrap();
+        std::fs::write(game.join("gui.rpy"), "define gui.accent = \"#fff\"\n").unwrap();
+        std::fs::write(
+            game.join("tl").join("russian").join("script.rpy"),
+            "label start:\n    \"RU\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            game.join("cache").join("story.rpy"),
+            "label start:\n    \"CACHE\"\n",
+        )
+        .unwrap();
+
+        let (inputs, skipped) = collect_sources(&base).expect("collect_sources");
+        let _ = std::fs::remove_dir_all(&base);
+
+        let paths: Vec<&str> = inputs.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths.contains(&"game/script.rpy"), "{paths:?}");
+        assert!(paths.contains(&"game/chapters/chapter1.rpy"), "{paths:?}");
+        assert!(skipped.contains(&"gui.rpy".to_string()), "{skipped:?}");
+        assert!(
+            paths.iter().all(|p| !p.contains("tl/") && !p.contains("cache/")),
+            "служебные файлы не должны попадать в импорт: {paths:?}"
+        );
+    }
+
+    #[test]
+    fn imports_bom_file_from_disk_and_skips_service_dirs() {
+        let base = scratch_dir();
+        let game = base.join("game");
+        std::fs::create_dir_all(game.join("tl").join("russian")).unwrap();
+        std::fs::create_dir_all(game.join("cache")).unwrap();
+        // Written from disk with a UTF-8 BOM, exactly like Windows-authored .rpy files.
+        std::fs::write(
+            game.join("script.rpy"),
+            "\u{feff}label start:\n    \"Привет с диска.\"\n",
+        )
+        .unwrap();
+        // The same label inside tl/ and cache/ must never reach the project.
+        std::fs::write(
+            game.join("tl").join("russian").join("script.rpy"),
+            "\u{feff}label start:\n    \"Перевод.\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            game.join("cache").join("story.rpy"),
+            "label cached:\n    return\n",
+        )
+        .unwrap();
+
+        let (inputs, _skipped) = collect_sources(&base).expect("collect_sources");
+        let paths: Vec<String> = inputs.iter().map(|i| i.path.clone()).collect();
+        assert_eq!(paths, vec!["game/script.rpy".to_string()], "{paths:?}");
+
+        let (project, report) = import(&inputs, "Тест", "test");
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(report.files, 1);
+        assert_eq!(report.scenes, 1);
+        let scene = &project.scenes[0];
+        assert_eq!(scene.label_name.as_deref(), Some("start"));
+        let narrate: NarrateParams = scene.nodes[0].typed();
+        assert_eq!(
+            narrate.text.get("ru").map(String::as_str),
+            Some("Привет с диска.")
+        );
+    }
+
+    #[test]
+    fn unknown_code_goes_to_code_blocks_and_init() {
+        let content = src(&[
+            "define m = Character(\"Мира\")",
+            "",
+            "transform slide_left:",
+            "    xalign 0.0",
+            "",
+            "label start:",
+            "    m \"Привет\"",
+            "    call screen inventory from _call_screen_1",
+            "    \"Конец.\"",
+            "",
+            "init python:",
+            "    config.rollback_enabled = False",
+        ]);
+        let (project, report) = parse_one(&content);
+
+        let scene = scene_by_label(&project, "start");
+        assert_eq!(
+            kinds(scene),
+            vec![NodeKind::SAY, NodeKind::CODE, NodeKind::NARRATE]
+        );
+        assert!(report.code_blocks >= 1);
+
+        // The unsupported statement is kept verbatim (dedented) instead of dropped.
+        assert_eq!(scene.nodes[1].params["language"], "renpy");
+        let code = scene.nodes[1].params["code"].as_str().unwrap_or_default();
+        assert!(
+            code.contains("call screen inventory from _call_screen_1"),
+            "{code:?}"
+        );
+
+        // File-level statements survive in the generated zz_init script.
+        assert!(
+            project.init_script.contains("transform slide_left"),
+            "{:?}",
+            project.init_script
+        );
+        assert!(
+            project.init_script.contains("xalign 0.0"),
+            "{:?}",
+            project.init_script
+        );
+        assert!(
+            project
+                .init_script
+                .contains("config.rollback_enabled = False"),
+            "{:?}",
+            project.init_script
+        );
+    }
+
+    #[test]
+    fn rewrites_label_jumps_to_scene_ids() {
+        let (project, _report) = parse_one(
+            "label start:\n    jump chapter_two\n\nlabel chapter_two:\n    \"Вторая глава.\"\n    jump nowhere\n",
+        );
+
+        assert_eq!(project.scenes.len(), 2);
+        let second = scene_by_label(&project, "chapter_two");
+
+        let known: JumpParams = project.scenes[0].nodes[0].typed();
+        assert_eq!(known.target.as_deref(), Some(second.id.as_str()));
+
+        // Unknown labels stay raw so the generated script still jumps somewhere valid.
+        let unknown: JumpParams = second.nodes[1].typed();
+        assert_eq!(unknown.target.as_deref(), Some("nowhere"));
+    }
+}

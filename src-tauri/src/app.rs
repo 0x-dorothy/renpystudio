@@ -202,7 +202,8 @@ pub fn run() {
             commands::default_block_params,
             commands::project_path,
             commands::ai_models,
-            commands::ai_chat
+            commands::ai_chat,
+            commands::ai_forget_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running RenPy Studio");

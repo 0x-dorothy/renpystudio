@@ -13,6 +13,7 @@ mod mcp;
 mod model;
 mod plugins;
 mod sdk;
+mod secret;
 mod settings;
 mod store;
 mod templates;

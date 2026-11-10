@@ -461,8 +461,7 @@ mod tests {
         // An empty provider URL must fail before any request is attempted.
         let settings = AiSettings {
             base_url: String::new(),
-            api_key: "sk-test".into(),
-            model: "test".into(),
+            ..AiSettings::default()
         };
         assert!(list_models(&settings).is_err());
         assert!(chat(&settings, "", &[]).is_err());

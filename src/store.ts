@@ -144,6 +144,7 @@ interface StudioState {
   saveUi: (ui: UiConfig) => Promise<void>;
 
   saveSettings: (settings: Settings) => Promise<void>;
+  forgetAiKey: () => Promise<void>;
   detectSdk: (force?: boolean) => Promise<void>;
   setSdkPath: (path: string | null) => Promise<void>;
   startMcp: (port?: number) => Promise<void>;
@@ -268,6 +269,26 @@ export const useStudio = create<StudioState>((set, get) => {
   const fail = (error: unknown) => {
     get().toast("error", errText(error));
     return null;
+  };
+
+  /** Runs a silent export+lint after a plugin change and reports the result. */
+  const lintAfterPlugins = async (action: "enabled" | "disabled") => {
+    try {
+      const payload = await api.lint();
+      set({ lint: payload });
+      if (!payload.report.ran) {
+        get().toast("info", i18n.t("plugins.lintSkipped"));
+        return;
+      }
+      const errors = payload.report.problems.filter((problem) => problem.severity === "error").length;
+      if (errors > 0) {
+        get().toast("error", i18n.t(`plugins.${action}LintErrors`, { count: errors }));
+      } else {
+        get().toast("success", i18n.t(`plugins.${action}LintOk`));
+      }
+    } catch (error) {
+      get().toast("info", i18n.t("plugins.lintFailed", { message: errText(error) }));
+    }
   };
 
   const guarded = async <T,>(fn: () => Promise<T>, okMessage?: string): Promise<T | null> => {
@@ -710,6 +731,13 @@ export const useStudio = create<StudioState>((set, get) => {
         get().toast("success", i18n.t("settings.saved"));
       }
     },
+    forgetAiKey: async () => {
+      const saved = await guarded(() => api.aiForgetKey());
+      if (saved) {
+        set({ settings: saved });
+        get().toast("info", i18n.t("ai.keyRemoved"));
+      }
+    },
     detectSdk: async (force = false) => {
       const info = await guarded(() => api.detectSdk(force));
       if (info) {
@@ -855,7 +883,9 @@ export const useStudio = create<StudioState>((set, get) => {
       if (env) {
         applyEnvelope(env);
         await get().refreshPlugins();
-        get().toast("success", i18n.t("plugins.enabled"));
+        // A plugin is foreign code: check right away so "enabled but broken"
+        // is visible without launching the game.
+        await lintAfterPlugins("enabled");
       }
     },
     disablePlugin: async (id) => {
@@ -863,7 +893,7 @@ export const useStudio = create<StudioState>((set, get) => {
       if (env) {
         applyEnvelope(env);
         await get().refreshPlugins();
-        get().toast("info", i18n.t("plugins.disabled"));
+        await lintAfterPlugins("disabled");
       }
     },
     showPluginDocs: async (id) => {

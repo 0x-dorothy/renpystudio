@@ -737,11 +737,10 @@ pub fn slugify(input: &str) -> String {
             out.push_str(m);
         } else if lower.is_ascii_alphanumeric() {
             out.push(lower);
-        } else if lower == '_' || lower == '-' || lower.is_whitespace() {
-            if !out.ends_with('_') {
+        } else if (lower == '_' || lower == '-' || lower.is_whitespace())
+            && !out.ends_with('_') {
                 out.push('_');
             }
-        }
     }
     let trimmed = out.trim_matches('_').to_string();
     if trimmed.is_empty() {

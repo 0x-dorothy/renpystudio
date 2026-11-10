@@ -120,6 +120,7 @@ export const api = {
   aiModels: () => invoke<import("./types").AiModelInfo[]>("ai_models"),
   aiChat: (messages: { role: string; content: string }[], sceneId?: string | null) =>
     invoke<import("./types").AiReply>("ai_chat", { messages, sceneId }),
+  aiForgetKey: () => invoke<Settings>("ai_forget_key"),
 
   revealInExplorer: (path: string) => invoke<void>("open_in_explorer", { path }),
   defaultParams: (kind: string) =>

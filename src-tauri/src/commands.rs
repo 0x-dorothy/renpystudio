@@ -362,9 +362,33 @@ pub fn app_bootstrap(state: State<'_, Shared>) -> Result<Bootstrap, String> {
 #[tauri::command]
 pub fn settings_save(state: State<'_, Shared>, settings: Settings) -> Result<Settings, String> {
     let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
-    *guard = settings;
+    let mut incoming = settings;
+    // The webview never receives the key, so an empty field means "keep the
+    // stored key" — only a non-empty value replaces it.
+    if incoming.ai.api_key.trim().is_empty() {
+        incoming.ai.api_key = guard.ai.api_key.clone();
+        if incoming.ai.api_key_enc.is_none() {
+            incoming.ai.api_key_enc = guard.ai.api_key_enc.clone();
+            incoming.ai.api_key_plain = guard.ai.api_key_plain.clone();
+        }
+    }
+    incoming.ai.has_key = !incoming.ai.api_key.is_empty();
+    *guard = incoming;
     guard.save()?;
     state.sdk.invalidate();
+    Ok(guard.clone())
+}
+
+/// Drops the stored provider key (the UI cannot clear it by sending an empty
+/// field, because empty means "unchanged").
+#[tauri::command]
+pub fn ai_forget_key(state: State<'_, Shared>) -> Result<Settings, String> {
+    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    guard.ai.api_key.clear();
+    guard.ai.api_key_enc = None;
+    guard.ai.api_key_plain = None;
+    guard.ai.has_key = false;
+    guard.save()?;
     Ok(guard.clone())
 }
 
@@ -653,7 +677,7 @@ pub fn scene_update(
 ) -> Result<StateEnvelope, String> {
     {
         let mut store = lock_store(&state)?;
-        store.checkpoint();
+        store.checkpoint_tagged(&format!("scene:{scene_id}"));
         let scene = store
             .project
             .scenes
@@ -867,7 +891,7 @@ pub fn node_update(
 ) -> Result<StateEnvelope, String> {
     {
         let mut store = lock_store(&state)?;
-        store.checkpoint();
+        store.checkpoint_tagged(&format!("node:{node_id}"));
         with_scene_mut(&mut store, &scene_id, |scene| {
             let node = scene
                 .nodes
@@ -969,7 +993,7 @@ pub fn character_upsert(
 ) -> Result<StateEnvelope, String> {
     {
         let mut store = lock_store(&state)?;
-        store.checkpoint();
+        store.checkpoint_tagged(&format!("character:{}", character.id));
         let mut character = character;
         if character.id.trim().is_empty() {
             character.id = new_id();
@@ -1012,7 +1036,7 @@ pub fn character_delete(state: State<'_, Shared>, id: String) -> Result<StateEnv
 pub fn variable_upsert(state: State<'_, Shared>, variable: Variable) -> Result<StateEnvelope, String> {
     {
         let mut store = lock_store(&state)?;
-        store.checkpoint();
+        store.checkpoint_tagged(&format!("variable:{}", variable.id));
         let mut variable = variable;
         if variable.id.trim().is_empty() {
             variable.id = new_id();
@@ -1944,7 +1968,7 @@ pub fn plugin_enable(state: State<'_, Shared>, id: String) -> Result<StateEnvelo
     }
     let _ = crate::sdk::write_project_settings(&root, None).ok();
     state.emit_project_changed("plugin-enabled");
-    Ok(envelope(&state)?)
+    envelope(&state)
 }
 
 #[tauri::command]

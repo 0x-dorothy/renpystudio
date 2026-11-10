@@ -126,6 +126,8 @@ function AiPanelBody() {
               </button>
             </span>
           </div>
+        ) : !settings.ai.hasKey && !settings.ai.apiKey ? (
+          <div className="text-[10.5px] leading-snug text-[var(--warn)]">{t("ai.keyMissing")}</div>
         ) : null}
       </div>
 

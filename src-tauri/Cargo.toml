@@ -1,6 +1,6 @@
 [package]
 name = "renpy-studio"
-version = "0.2.0"
+version = "0.2.1"
 description = "Visual no-code IDE for Ren'Py visual novels"
 authors = ["RenPy Studio"]
 edition = "2021"
@@ -31,6 +31,13 @@ similar = "2"
 zip = "2"
 # OpenAI-compatible assistant: the key never leaves the Rust side.
 ureq = { version = "2", features = ["json", "tls"] }
+
+[target.'cfg(windows)'.dependencies]
+# DPAPI keeps the provider key out of settings.json as plain text.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+] }
 
 [profile.release]
 codegen-units = 1

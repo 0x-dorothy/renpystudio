@@ -4,6 +4,7 @@ use crate::model::{now_iso, Project, Scene, FORMAT_VERSION};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub const STUDIO_DIR: &str = "renpy-studio";
 pub const PROJECT_FILE: &str = "project.json";
@@ -11,6 +12,10 @@ pub const MARKER_FILE: &str = "renpy-studio.rpyproj";
 pub const HISTORY_DIR: &str = "history";
 pub const INDEX_FILE: &str = "index.json";
 pub const MAX_AUTO_SNAPSHOTS: usize = 50;
+
+/// Typing in an inspector sends a mutation every ~450 ms; edits to the same
+/// object closer than this window share one undo step.
+const COALESCE_WINDOW: Duration = Duration::from_millis(1200);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +63,9 @@ pub struct Store {
     undo: Vec<Project>,
     redo: Vec<Project>,
     undo_limit: usize,
+    /// Key and time of the last checkpoint; consecutive edits of the same
+    /// object collapse into one undo step.
+    checkpoint_mark: Option<(String, Instant)>,
 }
 
 impl Default for Store {
@@ -71,6 +79,7 @@ impl Default for Store {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_limit: 200,
+            checkpoint_mark: None,
         }
     }
 }
@@ -96,10 +105,31 @@ impl Store {
 
     /// Records the current state for undo before a mutation.
     pub fn checkpoint(&mut self) {
-        self.undo.push(self.project.clone());
-        if self.undo.len() > self.undo_limit {
-            self.undo.remove(0);
+        self.checkpoint_tagged("");
+    }
+
+    /// A checkpoint that may be merged with the previous one. Passing the same
+    /// non-empty `key` twice within [`COALESCE_WINDOW`] keeps a single undo step,
+    /// so typing a line of dialogue is undone as a whole instead of per keystroke.
+    pub fn checkpoint_tagged(&mut self, key: &str) {
+        let now = Instant::now();
+        let coalesce = !key.is_empty()
+            && self
+                .checkpoint_mark
+                .as_ref()
+                .map(|(last, at)| last == key && now.duration_since(*at) < COALESCE_WINDOW)
+                .unwrap_or(false);
+        if !coalesce {
+            self.undo.push(self.project.clone());
+            if self.undo.len() > self.undo_limit {
+                self.undo.remove(0);
+            }
         }
+        self.checkpoint_mark = if key.is_empty() {
+            None
+        } else {
+            Some((key.to_string(), now))
+        };
         self.redo.clear();
         self.revision += 1;
         self.dirty = true;
@@ -108,6 +138,7 @@ impl Store {
 
     pub fn undo(&mut self) -> bool {
         if let Some(prev) = self.undo.pop() {
+            self.checkpoint_mark = None;
             let current = std::mem::replace(&mut self.project, prev);
             self.redo.push(current);
             self.revision += 1;
@@ -120,6 +151,7 @@ impl Store {
 
     pub fn redo(&mut self) -> bool {
         if let Some(next) = self.redo.pop() {
+            self.checkpoint_mark = None;
             let current = std::mem::replace(&mut self.project, next);
             self.undo.push(current);
             self.revision += 1;
@@ -133,6 +165,7 @@ impl Store {
     pub fn clear_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.checkpoint_mark = None;
     }
 
     // -----------------------------------------------------------------------
@@ -164,12 +197,14 @@ impl Store {
             .map_err(|e| format!("project.json повреждён: {e}"))?;
         migrate(&mut project)?;
 
-        let mut store = Store::default();
-        store.root = Some(root.to_path_buf());
-        store.project = project;
-        store.revision = 1;
-        store.dirty = false;
-        store.last_saved = Some(now_iso());
+        let store = Store {
+            root: Some(root.to_path_buf()),
+            project,
+            revision: 1,
+            dirty: false,
+            last_saved: Some(now_iso()),
+            ..Store::default()
+        };
         store.ensure_dirs()?;
         Ok(store)
     }
@@ -199,11 +234,13 @@ impl Store {
         project.meta.start_scene = Some(scene.id.clone());
         project.scenes.push(scene);
 
-        let mut store = Store::default();
-        store.root = Some(root.to_path_buf());
-        store.project = project;
-        store.revision = 1;
-        store.dirty = true;
+        let mut store = Store {
+            root: Some(root.to_path_buf()),
+            project,
+            revision: 1,
+            dirty: true,
+            ..Store::default()
+        };
         store.ensure_dirs()?;
         store.write_marker()?;
         store.save()?;
@@ -471,5 +508,48 @@ mod tests {
         assert_eq!(list[0].label, "Перед правкой");
         assert_eq!(list[0].kind, "manual");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tagged_checkpoints_coalesce_for_one_object() {
+        let mut store = Store::default();
+        let initial = store.project.meta.title.clone();
+        store.checkpoint_tagged("node:a");
+        store.project.meta.title = "первый".into();
+        store.checkpoint_tagged("node:a");
+        store.project.meta.title = "второй".into();
+        store.checkpoint_tagged("node:a");
+        // Typing must not fill the history with a snapshot per keystroke.
+        assert_eq!(store.undo.len(), 1);
+        assert!(store.undo());
+        assert_eq!(store.project.meta.title, initial);
+    }
+
+    #[test]
+    fn other_objects_and_untagged_edits_start_a_new_step() {
+        let mut store = Store::default();
+        store.checkpoint_tagged("node:a");
+        store.checkpoint_tagged("node:b");
+        assert_eq!(store.undo.len(), 2);
+        store.checkpoint_tagged("node:b");
+        assert_eq!(store.undo.len(), 2);
+        // An untagged mutation (add block) breaks the run.
+        store.checkpoint();
+        store.checkpoint_tagged("node:b");
+        assert_eq!(store.undo.len(), 4);
+    }
+
+    #[test]
+    fn undo_resets_coalescing() {
+        let mut store = Store::default();
+        let initial = store.project.meta.title.clone();
+        store.checkpoint_tagged("node:a");
+        store.checkpoint_tagged("node:a");
+        assert_eq!(store.undo.len(), 1);
+        assert!(store.undo());
+        // After an undo the next edit is its own step, even for the same block.
+        store.checkpoint_tagged("node:a");
+        assert_eq!(store.undo.len(), 1);
+        assert_eq!(store.project.meta.title, initial);
     }
 }

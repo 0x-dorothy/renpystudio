@@ -15,7 +15,20 @@ pub struct RecentProject {
 #[serde(rename_all = "camelCase", default)]
 pub struct AiSettings {
     pub base_url: String,
+    /// Plain key, kept in memory only. It is never serialised — neither to disk
+    /// nor to the webview; `api_key_enc` is what actually travels.
+    #[serde(default, skip_serializing)]
     pub api_key: String,
+    /// DPAPI-sealed key (hex). Windows keeps the key readable only by this user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_enc: Option<String>,
+    /// Plain fallback when the OS has no DPAPI (and for projects created before
+    /// the key was sealed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_plain: Option<String>,
+    /// Whether a key is stored, so the UI can show "saved" without seeing it.
+    #[serde(default)]
+    pub has_key: bool,
     pub model: String,
 }
 
@@ -24,7 +37,47 @@ impl Default for AiSettings {
         AiSettings {
             base_url: "https://api.openai.com/v1".into(),
             api_key: String::new(),
+            api_key_enc: None,
+            api_key_plain: None,
+            has_key: false,
             model: String::new(),
+        }
+    }
+}
+
+impl AiSettings {
+    /// Brings the plain key back into memory after reading the file.
+    pub fn unlock(&mut self) {
+        if self.api_key.is_empty() {
+            if let Some(enc) = self.api_key_enc.as_deref() {
+                self.api_key = crate::secret::unprotect(enc).unwrap_or_default();
+            }
+            if self.api_key.is_empty() {
+                if let Some(plain) = self.api_key_plain.as_deref() {
+                    self.api_key = plain.to_string();
+                }
+            }
+        }
+        self.has_key = !self.api_key.is_empty();
+    }
+
+    /// Prepares a writable copy: seals the key and drops every plain copy.
+    pub fn seal(&mut self) {
+        self.has_key = !self.api_key.is_empty();
+        if self.api_key.is_empty() {
+            self.api_key_enc = None;
+            self.api_key_plain = None;
+            return;
+        }
+        match crate::secret::protect(&self.api_key) {
+            Some(enc) => {
+                self.api_key_enc = Some(enc);
+                self.api_key_plain = None;
+            }
+            None => {
+                self.api_key_enc = None;
+                self.api_key_plain = Some(self.api_key.clone());
+            }
         }
     }
 }
@@ -86,13 +139,17 @@ impl Settings {
             return Settings::default();
         };
         let clean = raw.trim_start_matches('\u{feff}');
-        serde_json::from_str(clean).unwrap_or_default()
+        let mut settings: Settings = serde_json::from_str(clean).unwrap_or_default();
+        settings.ai.unlock();
+        settings
     }
 
     pub fn save(&self) -> Result<(), String> {
         let dir = Self::dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let mut json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        let mut snapshot = self.clone();
+        snapshot.ai.seal();
+        let mut json = serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())?;
         json.push('\n');
         crate::store::write_atomic(&Self::path(), json.as_bytes())
     }

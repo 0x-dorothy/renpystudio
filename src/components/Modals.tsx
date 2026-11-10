@@ -123,6 +123,7 @@ function SettingsModal() {
   const version = useStudio((s) => s.version);
   const project = useStudio((s) => s.project);
   const saveSettings = useStudio((s) => s.saveSettings);
+  const forgetAiKey = useStudio((s) => s.forgetAiKey);
   const detectSdk = useStudio((s) => s.detectSdk);
   const setSdkPath = useStudio((s) => s.setSdkPath);
   const startMcp = useStudio((s) => s.startMcp);
@@ -310,13 +311,26 @@ function SettingsModal() {
             />
           </Field>
           <Field label={t("settings.aiKey")}>
-            <Input
-              type="password"
-              autoComplete="off"
-              value={draft.ai.apiKey}
-              onChange={(event) => setDraft({ ...draft, ai: { ...draft.ai, apiKey: event.target.value } })}
-              onBlur={() => void saveSettings(draft)}
-            />
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="password"
+                autoComplete="off"
+                value={draft.ai.apiKey ?? ""}
+                placeholder={draft.ai.hasKey ? t("settings.aiKeySaved") : "sk-…"}
+                onChange={(event) => setDraft({ ...draft, ai: { ...draft.ai, apiKey: event.target.value } })}
+                onBlur={() => void saveSettings(draft)}
+              />
+              {draft.ai.hasKey ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title={t("settings.aiKeyRemove")}
+                  onClick={() => void forgetAiKey()}
+                >
+                  {t("settings.aiKeyRemove")}
+                </Button>
+              ) : null}
+            </div>
           </Field>
           <Field label={t("settings.aiModel")}>
             <Input

@@ -183,7 +183,9 @@ export interface SdkInfo {
 
 export interface AiSettings {
   baseUrl: string;
-  apiKey: string;
+  /** The key itself is never sent to the webview; only `hasKey` is exposed. */
+  apiKey?: string;
+  hasKey?: boolean;
   model: string;
 }
 
