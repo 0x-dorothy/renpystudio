@@ -1,7 +1,7 @@
 {
   "name": "renpy-studio",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,13 +10,14 @@
     "check": "tsc --noEmit && node scripts/check-i18n.mjs",
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri.ps1 dev",
-    "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri.ps1 build"
+    "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri.ps1 build",
+    "version": "node scripts/set-version.mjs"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^1.1.5",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "@xyflow/react": "^12.8.6",
-    "@dagrejs/dagre": "^1.1.5",
     "i18next": "^25.5.2",
     "lucide-react": "^0.545.0",
     "react": "^18.3.1",

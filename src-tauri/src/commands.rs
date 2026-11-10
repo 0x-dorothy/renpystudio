@@ -32,24 +32,102 @@ fn cleanup_preview(root: &Path) {
     let _ = std::fs::remove_file(root.join(PREVIEW_FILE));
 }
 
-fn preview_harness(screen: &str) -> String {
+pub(crate) fn preview_harness(screen: &str, ru: bool) -> String {
+    // Ren'Py берёт локаль из проекта: подписи, которые автор увидит в игре,
+    // должны быть на языке новеллы, а не всегда по-русски.
+    let (not_found, hint) = if ru {
+        ("Экран не найден.", "Предпросмотр экрана · Esc — выход")
+    } else {
+        ("Screen not found.", "Screen preview · Esc to exit")
+    };
     format!(
-        "# Временный файл предпросмотра RenPy Studio.\n\
-# Удаляется при запуске, остановке, экспорте и сборке.\n\
-\nscreen _studio_preview_backdrop():\n\
-    zorder -1000\n\
-    add Solid(\"#141420\")\n\
-    key \"game_menu\" action Quit(confirm=False)\n\
-    text \"Предпросмотр экрана · Esc — выход\" xalign 0.5 yalign 0.985 size 16 color \"#6a6a80\"\n\
-\nlabel main_menu:\n\
-    if not renpy.has_screen({name}):\n\
-        \"Экран {name} не найден.\"\n\
-        return\n\
-    show screen _studio_preview_backdrop\n\
-    $ renpy.show_screen({name})\n\
-    while True:\n\
-        pause 0.1 hard\n",
-        name = rpy_string(screen)
+        r##"# Временный файл предпросмотра RenPy Studio.
+# Удаляется при запуске, остановке, экспорте и сборке.
+# Без переменных окружения RENPY_STUDIO_* файл ничего не делает: главное меню
+# остаётся обычным, экран предпросмотра не показывается.
+
+init -100 python:
+    import os as _studio_os
+    import json as _studio_json
+    import threading as _studio_threading
+    import time as _studio_time
+    import urllib.request as _studio_urllib
+
+    _studio_bridge = _studio_os.environ.get("RENPY_STUDIO_BRIDGE", "")
+    _studio_preview_mode = _studio_os.environ.get("RENPY_STUDIO_PREVIEW") == "1" and bool(_studio_bridge)
+    _studio_commands = []
+    _studio_lock = _studio_threading.Lock()
+    # Студия различает «игра стартовала» и «экран уже показан»: второй параметр
+    # появляется только когда метка предпросмотра действительно выполнилась.
+    _studio_ready = [False]
+
+    def _studio_poll():
+        # После renpy.reload_script() стор очищается и имена исчезают: старый поток
+        # должен просто завершиться, а не сыпать traceback в log.txt.
+        try:
+            while True:
+                url = _studio_bridge
+                if _studio_ready[0]:
+                    url += "&ready=1"
+                try:
+                    with _studio_urllib.urlopen(url, timeout=5) as response:
+                        data = response.read().decode("utf-8")
+                        if data and data.strip() != "{{}}":
+                            payload = _studio_json.loads(data)
+                            with _studio_lock:
+                                _studio_commands.append(payload)
+                except Exception:
+                    pass
+                _studio_time.sleep(0.25)
+        except NameError:
+            return
+
+    def _studio_take():
+        with _studio_lock:
+            if _studio_commands:
+                return _studio_commands.pop(0)
+        return None
+
+    if _studio_preview_mode:
+        _studio_threading.Thread(target=_studio_poll, daemon=True).start()
+        # Метку main_menu не переопределяем одноимённой меткой: в проекте со
+        # своим label main_menu это была бы ошибка «defined twice». Штатный
+        # label_overrides подменяет имя, не конфликтуя с авторским кодом.
+        config.label_overrides["main_menu"] = "_studio_preview"
+
+screen _studio_preview_backdrop():
+    zorder -1000
+    add Solid("#141420")
+    key "game_menu" action Quit(confirm=False)
+    text {hint} xalign 0.5 yalign 0.985 size 16 color "#6a6a80"
+
+label _studio_preview:
+    $ renpy.block_rollback()
+    if not renpy.has_screen({name}):
+        {not_found}
+        return
+    $ _studio_ready[0] = True
+    show screen _studio_preview_backdrop
+    $ renpy.show_screen({name})
+    while True:
+        python:
+            _cmd = _studio_take()
+            if _cmd:
+                _kind = _cmd.get("cmd")
+                if _kind == "show_screen" and _cmd.get("screen"):
+                    renpy.show_screen(_cmd["screen"])
+                elif _kind == "reload":
+                    renpy.reload_script()
+                    if _cmd.get("screen"):
+                        renpy.show_screen(_cmd["screen"])
+                elif _kind == "jump" and _cmd.get("label"):
+                    renpy.jump(_cmd["label"])
+        # pause-выражение с `hard` в Ren'Py 8 больше не разбирается — только вызов.
+        $ renpy.pause(0.15)
+"##,
+        name = rpy_string(screen),
+        hint = rpy_string(hint),
+        not_found = rpy_string(not_found),
     )
 }
 
@@ -62,6 +140,8 @@ pub struct AppState {
     pub mcp: Mutex<Option<crate::mcp::McpHandle>>,
     pub last_export: Mutex<Option<ExportReport>>,
     pub build: Mutex<BuildState>,
+    /// Live bridge of the running preview, if any.
+    pub preview: Mutex<Option<crate::bridge::Bridge>>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -88,6 +168,7 @@ impl AppState {
             mcp: Mutex::new(None),
             last_export: Mutex::new(None),
             build: Mutex::new(BuildState::default()),
+            preview: Mutex::new(None),
         })
     }
 
@@ -1213,7 +1294,41 @@ pub fn project_stop(state: State<'_, Shared>) -> Result<bool, String> {
     if let Some(root) = state.root() {
         cleanup_preview(&root);
     }
+    if let Ok(mut guard) = state.preview.lock() {
+        *guard = None;
+    }
     Ok(state.sdk.stop_game())
+}
+
+/// Pushes a whitelisted command to the running preview.
+#[tauri::command]
+pub fn project_preview_command(
+    state: State<'_, Shared>,
+    command: String,
+    screen: Option<String>,
+) -> Result<bool, String> {
+    let kind = command.trim();
+    if !matches!(kind, "reload" | "show_screen" | "jump") {
+        return Err("Неизвестная команда предпросмотра".into());
+    }
+    let guard = state
+        .preview
+        .lock()
+        .map_err(|_| "Мост предпросмотра недоступен".to_string())?;
+    let Some(bridge) = guard.as_ref() else {
+        return Ok(false);
+    };
+    // Пока игра не дошла до самого экрана, команда уйдёт в пустоту: лучше честно
+    // сказать «предпросмотр не запущен», чем делать вид, что экран обновился.
+    if !bridge.ready() {
+        return Ok(false);
+    }
+    let mut payload = json!({ "cmd": kind });
+    if let Some(screen) = screen.filter(|value| !value.trim().is_empty()) {
+        payload["screen"] = json!(screen);
+    }
+    bridge.push(payload);
+    Ok(true)
 }
 
 /// Starts the game with a temporary `main_menu` override that shows one screen.
@@ -1246,9 +1361,22 @@ pub fn project_preview_screen(
         });
     }
     crate::watcher::suppress_for(2500);
-    crate::store::write_atomic(&root.join(PREVIEW_FILE), preview_harness(name).as_bytes())?;
+    let ru = {
+        let store = lock_store(&state)?;
+        store.project.meta.default_locale.trim().to_lowercase().starts_with("ru")
+    };
+    let bridge = crate::bridge::Bridge::start()?;
+    let bridge_url = bridge.url();
+    if let Ok(mut guard) = state.preview.lock() {
+        *guard = Some(bridge);
+    }
+    crate::store::write_atomic(&root.join(PREVIEW_FILE), preview_harness(name, ru).as_bytes())?;
     state.sdk.stop_game();
-    match state.sdk.run_game(&sdk, &root) {
+    let envs = vec![
+        ("RENPY_STUDIO_PREVIEW", "1".to_string()),
+        ("RENPY_STUDIO_BRIDGE", bridge_url),
+    ];
+    match state.sdk.run_game_with_env(&sdk, &root, &envs) {
         Ok(pid) => Ok(RunResult {
             ok: true,
             message: "Предпросмотр запущен".into(),
@@ -1256,6 +1384,9 @@ pub fn project_preview_screen(
         }),
         Err(e) => {
             cleanup_preview(&root);
+            if let Ok(mut guard) = state.preview.lock() {
+                *guard = None;
+            }
             Ok(RunResult {
                 ok: false,
                 message: e,
@@ -1638,7 +1769,7 @@ pub fn project_translate(
     let sdk = state
         .sdk_info()
         .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
-    let root = state.root().ok_or("Проект не открыт")?;
+    let root = crate::sdk::absolute(&state.root().ok_or("Проект не открыт")?);
     {
         let store = lock_store(&state)?;
         if !store.project.locales.iter().any(|l| l == &locale) {
@@ -1740,14 +1871,17 @@ pub fn project_build_start(
     }
     let shared = state.inner().clone();
     std::thread::spawn(move || {
+        // Абсолютные пути: `current_dir` уводит относительные аргументы.
+        let project_dir = crate::sdk::absolute(&root);
+        let destination = crate::sdk::absolute(&dest);
         let mut cmd = Command::new(&sdk.exe);
         cmd.arg("launcher")
             .arg("distribute")
-            .arg(&root)
+            .arg(&project_dir)
             .arg("--package")
             .arg(&package)
             .arg("--destination")
-            .arg(&dest)
+            .arg(&destination)
             .current_dir(&sdk.root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2174,4 +2308,35 @@ pub async fn ai_chat(
     tauri::async_runtime::spawn_blocking(move || crate::ai::chat(&settings, &system, &messages))
         .await
         .map_err(|err| format!("Сбой запроса: {err}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_harness;
+
+    /// Проект может объявить свой `label main_menu`; второй такой же — ошибка
+    /// «defined twice». Поэтому harness обязан подменять имя через label_overrides.
+    #[test]
+    fn preview_harness_does_not_declare_main_menu() {
+        let harness = preview_harness("save_load", true);
+        assert!(
+            harness.contains("config.label_overrides[\"main_menu\"] = \"_studio_preview\""),
+            "harness must override the label by name"
+        );
+        assert!(
+            !harness.contains("label main_menu:"),
+            "declaring label main_menu would crash projects that already have one"
+        );
+        assert!(harness.contains("label _studio_preview:"));
+        assert!(harness.contains("\"save_load\""));
+    }
+
+    #[test]
+    fn preview_harness_follows_project_locale() {
+        let ru = preview_harness("gallery", true);
+        assert!(ru.contains("Предпросмотр экрана"));
+        let en = preview_harness("gallery", false);
+        assert!(en.contains("Screen preview · Esc to exit"));
+        assert!(en.contains("Screen not found."));
+    }
 }

@@ -3,6 +3,7 @@
 mod app;
 mod ai;
 mod assets;
+mod bridge;
 mod cli;
 mod commands;
 mod diff;

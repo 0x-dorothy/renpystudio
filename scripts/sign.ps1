@@ -1,4 +1,4 @@
-# Signs the built NSIS installer with a Windows code-signing certificate.
+# Signs the built installer with a Windows code-signing certificate.
 #
 # The certificate is not part of the repository: pass either a .pfx file or the
 # thumbprint of a certificate installed in the current user's store.
@@ -21,12 +21,20 @@ $ErrorActionPreference = "Stop"
 $studio = Split-Path $PSScriptRoot -Parent
 
 if (-not $Installer) {
-    $dir = Join-Path $studio "src-tauri\target\release\bundle\nsis"
-    $latest = Get-ChildItem $dir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+    # Сначала релизная сборка (Inno), потом NSIS из tauri build.
+    $dirs = @(
+        (Join-Path $studio "dist-release"),
+        (Join-Path $studio "src-tauri\target\release\bundle\nsis")
+    )
+    $latest = $null
+    foreach ($dir in $dirs) {
+        $candidate = Get-ChildItem $dir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($candidate) { $latest = $candidate; break }
+    }
     if (-not $latest) {
-        Write-Error "Установщик не найден. Сначала: npm run tauri:build"
+        Write-Error "Установщик не найден. Сначала: powershell -File scripts\build-release.ps1"
     }
     $Installer = $latest.FullName
 }

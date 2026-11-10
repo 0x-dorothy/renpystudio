@@ -132,6 +132,11 @@ interface StudioState {
 
   addNode: (kind: string, index?: number) => Promise<void>;
   updateNodeParams: (nodeId: string, params: Record<string, unknown>) => Promise<void>;
+  updateNodeParamsInScene: (
+    sceneId: string,
+    nodeId: string,
+    params: Record<string, unknown>,
+  ) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
   duplicateNode: (nodeId: string) => Promise<void>;
   moveNode: (nodeId: string, toIndex: number) => Promise<void>;
@@ -698,6 +703,13 @@ export const useStudio = create<StudioState>((set, get) => {
         if (get().tab === "graph") void get().refreshGraph();
       }
     },
+    updateNodeParamsInScene: async (sceneId, nodeId, params) => {
+      const env = await guarded(() => api.updateNode(sceneId, nodeId, params));
+      if (env) {
+        applyEnvelope(env);
+        if (get().tab === "graph") void get().refreshGraph();
+      }
+    },
     deleteNode: async (nodeId) => {
       const sceneId = get().activeSceneId;
       if (!sceneId) return;
@@ -904,8 +916,9 @@ export const useStudio = create<StudioState>((set, get) => {
         applyEnvelope(env);
         await get().refreshPlugins();
         // A plugin is foreign code: check right away so "enabled but broken"
-        // is visible without launching the game.
-        await lintAfterPlugins("enabled");
+        // is visible without launching the game. Non-blocking on purpose: the
+        // full export+lint pass is heavy on large projects.
+        void lintAfterPlugins("enabled");
       }
     },
     disablePlugin: async (id) => {

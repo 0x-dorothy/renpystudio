@@ -6,6 +6,7 @@ import {
   Music,
   Play,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
   Type as TypeIcon,
@@ -14,6 +15,7 @@ import { useStudio } from "../store";
 import { api } from "../api";
 import { Button, Checkbox, Field, IconButton, Input, Segmented, Select } from "./ui";
 import { useDebouncedValue } from "../hooks";
+import { TranslationSection } from "./TranslationSection";
 import { assetUrl, clamp, newId } from "../util";
 import type {
   MainMenuConfig,
@@ -461,7 +463,7 @@ export function ScreensTab() {
   const { t } = useTranslation();
   const project = useStudio((s) => s.project);
   const saveUi = useStudio((s) => s.saveUi);
-  const [section, setSection] = useState<"menu" | "theme" | "screens" | "options">("menu");
+  const [section, setSection] = useState<"menu" | "theme" | "screens" | "options" | "translation">("menu");
   const [draft, setDraft] = useDebouncedValue<UiConfig | null>("ui", project?.ui ?? null, (next) => {
     if (next) void saveUi(next);
   });
@@ -493,19 +495,22 @@ export function ScreensTab() {
               { value: "theme", label: t("gui.section.theme") },
               { value: "screens", label: t("gui.section.screens") },
               { value: "options", label: t("gui.section.options") },
+              { value: "translation", label: t("gui.section.translation") },
             ]}
           />
         </div>
         <span className="text-[11px] text-[var(--muted-2)]">{t("screens.saved")}</span>
       </div>
 
-      <div className="scroll flex-1">
+      <div className={section === "translation" ? "flex min-h-0 flex-1 flex-col" : "scroll flex-1"}>
         {section === "menu" ? (
           <MainMenuSection ui={ui} onChange={onChange} project={project} />
         ) : section === "theme" ? (
           <ThemeSection ui={ui} onChange={onChange} project={project} />
         ) : section === "options" ? (
           <OptionsSection ui={ui} onChange={onChange} />
+        ) : section === "translation" ? (
+          <TranslationSection project={project} />
         ) : (
           <ScreensSection ui={ui} onChange={onChange} project={project} />
         )}
@@ -1103,6 +1108,17 @@ function ScreensSection({
     setSelectedElementId(null);
   };
 
+  const refreshPreview = async () => {
+    if (!screen) return;
+    try {
+      const ok = await api.previewCommand("reload", screen.name);
+      if (ok) toast("success", t("gui.previewRefreshed"));
+      else toast("info", t("gui.previewNotRunning"));
+    } catch (error) {
+      toast("error", String(error));
+    }
+  };
+
   const previewScreen = async () => {
     if (!screen) return;
     setPreviewing(true);
@@ -1398,6 +1414,9 @@ function ScreensSection({
                   onClick={() => void previewScreen()}
                 >
                   <Play size={13} /> {t("gui.preview")}
+                </Button>
+                <Button size="sm" variant="ghost" title={t("gui.refreshPreview")} onClick={() => void refreshPreview()}>
+                  <RefreshCw size={13} />
                 </Button>
                 <IconButton
                   title={t("common.delete")}

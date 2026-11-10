@@ -2,6 +2,7 @@
 
 use crate::commands::{self, AppState, Shared};
 use crate::settings::Settings;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::http::{header, Response, StatusCode};
 use tauri::{Emitter, Manager};
@@ -100,7 +101,10 @@ pub fn run() {
             });
 
             // Re-open the last project so the studio starts where the author left.
-            let settings = Settings::load();
+            let mut settings = Settings::load();
+            // A path from the command line (`.rpyproj` association, shortcut with
+            // a project) wins over the last opened project.
+            let cli_project = project_from_args();
 
             if settings.mcp_enabled {
                 match crate::mcp::start(state.clone(), settings.mcp_port, None) {
@@ -114,8 +118,8 @@ pub fn run() {
                 }
             }
 
-            if let Some(path) = settings.last_project.clone() {
-                let path = std::path::PathBuf::from(path);
+            let initial = cli_project.or_else(|| settings.last_project.clone().map(PathBuf::from));
+            if let Some(path) = initial {
                 if path.join("renpy-studio").join("project.json").is_file() {
                     match crate::store::Store::open(&path) {
                         Ok(store) => {
@@ -124,6 +128,8 @@ pub fn run() {
                             if let Ok(mut guard) = state.store.lock() {
                                 *guard = store;
                             }
+                            settings.remember_project(&path.display().to_string(), &title);
+                            let _ = settings.save();
                             let _ = handle.emit(
                                 "studio://project-opened",
                                 serde_json::json!({ "title": title }),
@@ -177,6 +183,7 @@ pub fn run() {
             commands::project_run,
             commands::project_stop,
             commands::project_preview_screen,
+            commands::project_preview_command,
             commands::project_build,
             commands::project_build_start,
             commands::project_build_status,
@@ -210,6 +217,29 @@ pub fn run() {
         .expect("error while running RenPy Studio");
 }
 
+/// Project folder passed on the command line: an `.rpyproj` marker file, a
+/// project directory, or any file inside one. Flags are ignored.
+fn project_from_args() -> Option<PathBuf> {
+    std::env::args_os()
+        .skip(1)
+        .filter_map(|arg| resolve_project_arg(Path::new(&arg)))
+        .next()
+}
+
+fn resolve_project_arg(path: &Path) -> Option<PathBuf> {
+    let raw = path.to_string_lossy();
+    if raw.trim().is_empty() || raw.starts_with('-') {
+        return None;
+    }
+    let root = if path.is_file() {
+        path.parent()?.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    let project = root.join("renpy-studio").join("project.json");
+    project.is_file().then_some(root)
+}
+
 fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -226,4 +256,38 @@ fn percent_decode(input: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_project_arg;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_project(name: &str) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "renpy-studio-args-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("renpy-studio")).unwrap();
+        fs::write(root.join("renpy-studio").join("project.json"), b"{}").unwrap();
+        let marker = root.join("renpy-studio.rpyproj");
+        fs::write(&marker, b"{}").unwrap();
+        (root, marker)
+    }
+
+    #[test]
+    fn project_arg_accepts_folder_marker_and_flags() {
+        let (root, marker) = temp_project("cli");
+        assert_eq!(resolve_project_arg(&root), Some(root.clone()));
+        assert_eq!(resolve_project_arg(&marker), Some(root.clone()));
+        assert_eq!(resolve_project_arg(&PathBuf::from("--no-splash")), None);
+        assert_eq!(
+            resolve_project_arg(&root.join("missing")),
+            None,
+            "a folder without project.json must be ignored"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 }

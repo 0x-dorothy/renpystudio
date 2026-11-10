@@ -65,6 +65,34 @@ fn is_sdk_root(path: &Path) -> bool {
     path.join("renpy.exe").is_file() && path.join("renpy").is_dir() && path.join("launcher").is_dir()
 }
 
+/// Абсолютный путь без `\\?\`-префикса.
+///
+/// `canonicalize` на Windows возвращает verbatim-путь (`\\?\E:\...`), а Ren'Py
+/// склеивает пути через `/` и такие файлы не находит. `std::path::absolute`
+/// появился только в Rust 1.79, а MSRV проекта — 1.77, поэтому свой вариант:
+/// достраиваем от текущей папки и схлопываем `.`/`..`.
+pub(crate) fn absolute(path: &Path) -> PathBuf {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(path),
+            Err(_) => path.to_path_buf(),
+        }
+    };
+    let mut out = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 fn read_version(root: &Path) -> String {
     let exe = root.join("renpy.exe");
     let mut cmd = Command::new(&exe);
@@ -204,14 +232,31 @@ impl SdkService {
 
     /// Launches the game through the SDK; a previous run is terminated first.
     pub fn run_game(&self, sdk: &SdkInfo, project: &Path) -> Result<String, String> {
+        self.run_game_with_env(sdk, project, &[])
+    }
+
+    pub fn run_game_with_env(
+        &self,
+        sdk: &SdkInfo,
+        project: &Path,
+        envs: &[(&str, String)],
+    ) -> Result<String, String> {
         self.stop_game();
+        // `current_dir` ниже меняет рабочую папку процесса: с относительным
+        // путём renpy.exe искал бы проект внутри самого себя. canonicalize здесь
+        // нельзя — он возвращает `\\?\E:\...`, а Ren'Py склеивает пути через `/`
+        // и такие файлы не находит.
+        let project = absolute(project);
         let mut cmd = Command::new(&sdk.exe);
-        cmd.arg(project)
+        cmd.arg(&project)
             .arg("run")
-            .current_dir(project)
+            .current_dir(&project)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .stdin(Stdio::null());
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
         let child = cmd
@@ -227,6 +272,18 @@ impl SdkService {
     pub fn stop_game(&self) -> bool {
         if let Ok(mut guard) = self.running.lock() {
             if let Some(mut child) = guard.take() {
+                // renpy.exe — это лаунчер: сама игра живёт в дочернем процессе.
+                // Простой kill() оставлял бы её работать, а следующий запуск
+                // дрался бы за .rpyc и порт.
+                #[cfg(windows)]
+                {
+                    let pid = child.id().to_string();
+                    let _ = Command::new("taskkill")
+                        .args(["/T", "/F", "/PID", pid.as_str()])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 return true;
@@ -238,17 +295,19 @@ impl SdkService {
     /// Runs `renpy.exe <project> lint <report> --error-code` and parses the report.
     pub fn lint(&self, sdk: &SdkInfo, project: &Path) -> LintReport {
         let mut report = LintReport::default();
+        // Без абсолютного пути `current_dir` уводит и отчёт, и сам проект.
+        let project = absolute(project);
         let studio_dir = project.join(crate::store::STUDIO_DIR);
         let _ = std::fs::create_dir_all(&studio_dir);
         let report_path = studio_dir.join("lint-report.txt");
         let _ = std::fs::remove_file(&report_path);
         let mut cmd = Command::new(&sdk.exe);
-        cmd.arg(project)
+        cmd.arg(&project)
             .arg("lint")
             .arg(&report_path)
             .arg("--error-code")
             .arg("--all-problems")
-            .current_dir(project)
+            .current_dir(&project)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
@@ -342,17 +401,18 @@ impl SdkService {
         project: &Path,
         package: &str,
         destination: &Path,
-    ) -> BuildReport {
-        let mut report = BuildReport::default();
-        std::fs::create_dir_all(destination).ok();
+    ) -> BuildReport {        let mut report = BuildReport::default();
+        let project = absolute(project);
+        let destination = absolute(destination);
+        std::fs::create_dir_all(&destination).ok();
         let mut cmd = Command::new(&sdk.exe);
         cmd.arg("launcher")
             .arg("distribute")
-            .arg(project)
+            .arg(&project)
             .arg("--package")
             .arg(package)
             .arg("--destination")
-            .arg(destination)
+            .arg(&destination)
             .current_dir(&sdk.root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -400,4 +460,25 @@ pub fn write_project_settings(project_root: &Path, sdk_path: Option<&str>) -> Re
     let mut json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
     json.push('\n');
     crate::store::write_atomic(&path, json.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::absolute;
+    use std::path::Path;
+
+    #[test]
+    fn absolute_strips_verbatim_prefix_and_dot_segments() {
+        let cwd = absolute(Path::new("."));
+        assert!(cwd.is_absolute());
+        assert!(
+            !cwd.to_string_lossy().starts_with(r"\\?\"),
+            "Ren'Py не открывает файлы по verbatim-пути"
+        );
+
+        let nested = absolute(Path::new(r"one\..\two"));
+        let text = nested.to_string_lossy();
+        assert!(text.ends_with("two"), "{text}");
+        assert!(!text.contains(".."), "{text}");
+    }
 }

@@ -2,12 +2,14 @@
 //!   renpy-studio --new <dir> <title> [--sdk <path>]
 //!   renpy-studio --export <dir> [--force]
 //!   renpy-studio --lint <dir> [--sdk <path>]
+//!   renpy-studio --preview <dir> <screen> [--sdk <path>] [--hold <секунды>]
 
 use crate::generator::GenOptions;
 use crate::model::Project;
 use crate::sdk::SdkService;
 use crate::store::Store;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn arg_value(args: &[String], flag: &str) -> Option<String> {
     args.iter()
@@ -107,6 +109,87 @@ pub fn run(args: &[String]) -> Option<i32> {
             println!("{}:{} [{}] {}", problem.file, problem.line, problem.severity, problem.message);
         }
         return Some(if report.problems.iter().all(|p| p.severity != "error") && report.ok { 0 } else { 2 });
+    }
+
+    if let Some(index) = args.iter().position(|a| a == "--preview") {
+        // Проверка моста IDE↔игра без графической студии: экспорт, временный
+        // harness и запуск игры с теми же env-переменными, что ставит GUI.
+        let dir = args.get(index + 1)?;
+        let screen = args.get(index + 2)?.clone();
+        let hold: u64 = arg_value(args, "--hold")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(12);
+        let root = PathBuf::from(dir);
+        let store = match Store::open(&root) {
+            Ok(store) => store,
+            Err(err) => {
+                eprintln!("open: {err}");
+                return Some(1);
+            }
+        };
+        let opts = GenOptions {
+            locale: store.project.meta.default_locale.clone(),
+            force: false,
+        };
+        if let Err(err) = crate::exporter::export(&store.project, &root, &opts) {
+            eprintln!("export: {err}");
+            return Some(1);
+        }
+        let service = SdkService::default();
+        let info = match service.detect(arg_value(args, "--sdk").as_deref(), Some(&root), true) {
+            Some(info) => info,
+            None => {
+                eprintln!("SDK not found");
+                return Some(1);
+            }
+        };
+        let ru = store
+            .project
+            .meta
+            .default_locale
+            .trim()
+            .to_lowercase()
+            .starts_with("ru");
+        let bridge = match crate::bridge::Bridge::start() {
+            Ok(bridge) => bridge,
+            Err(err) => {
+                eprintln!("bridge: {err}");
+                return Some(1);
+            }
+        };
+        let harness = crate::commands::preview_harness(&screen, ru);
+        if let Err(err) = crate::store::write_atomic(
+            &root.join("game").join("zz_studio_preview.rpy"),
+            harness.as_bytes(),
+        ) {
+            eprintln!("harness: {err}");
+            return Some(1);
+        }
+        let envs = vec![
+            ("RENPY_STUDIO_PREVIEW", "1".to_string()),
+            ("RENPY_STUDIO_BRIDGE", bridge.url()),
+        ];
+        match service.run_game_with_env(&info, &root, &envs) {
+            Ok(pid) => println!("game pid {pid}"),
+            Err(err) => {
+                eprintln!("run: {err}");
+                return Some(1);
+            }
+        }
+        println!("screen {screen}");
+        println!("bridge {}", bridge.url());
+        for _ in 0..hold {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        let polls = bridge.polls();
+        let ready = bridge.ready();
+        println!("polls {polls}");
+        println!("ready {ready}");
+        if !ready {
+            eprintln!("экран предпросмотра не показался за {hold} с (опросов: {polls})");
+        }
+        service.stop_game();
+        return Some(if ready { 0 } else { 2 });
     }
 
     if let Some(index) = args.iter().position(|a| a == "--import") {

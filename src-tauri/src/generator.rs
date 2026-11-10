@@ -815,6 +815,7 @@ init python:
                 let ctx = crate::ui_templates::Ctx {
                     width: theme.width.max(320),
                     locales: &project.locales,
+                    locale: opts.locale.clone(),
                     accent: theme.accent_color.clone(),
                     text: theme.text_color.clone(),
                     muted: theme.muted_color.clone(),

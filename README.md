@@ -32,7 +32,9 @@
 - **Экраны** — конструктор главного меню с живым предпросмотром.
 - **GUI** — без кода правится всё, что обычно пишут в `gui.rpy`/`options.rpy`: разрешение, палитра, шрифты, фоны меню, высота текстового окна, сетка сохранений и опции проекта (название, переходы, звук/музыка/озвучка). Рядом — конструктор собственных экранов: текст/кнопка/картинка на холсте, действия (переход, меню, возврат, показать экран), пресеты «Меню», «Об игре», «HUD».
 - **Библиотека экранов** — 12 готовых шаблонов с логикой: сохранение/загрузка (слоты, превью, перезапись, Delete), настройки, галерея CG с разблокировками, музыкальная комната, выбор главы, уведомления, HUD, confirm, статистика, дневник, инвентарь, телефон.
-- **Предпросмотр экрана** — кнопка «Проверить в игре» показывает выбранный экран в запущенной игре через временную подмену `main_menu`; файл удаляется при запуске, остановке, экспорте и сборке.
+- **Предпросмотр экрана** — кнопка «Проверить в игре» показывает выбранный экран в запущенной игре через временную подмену главного меню (`config.label_overrides`, поэтому своё `label main_menu` в проекте не конфликтует); файл удаляется при запуске, остановке, экспорте и сборке.
+- **Живой предпросмотр** — пока игра запущена в режиме предпросмотра, кнопка «Обновить в игре» перечитывает `.rpy` и показывает экран заново. Мост — TCP на `127.0.0.1` со случайным портом и токеном; забытый файл предпросмотра без переменных окружения ничего не делает.
+- **Переводы** — раздел GUI → «Переводы»: таблица строк по языкам, покрытие в процентах, поиск, «только пустые», правка на месте и генерация `tl/<lang>` через SDK.
 - **Image-based UI** — `imagebutton` с idle/hover и фоны-девять-слайсов (`Frame`) для текстовых кнопок.
 
 Тема генерируется в `game/zz_theme.rpy` с `init offset = -1`: он выполняется после шаблонного `gui.rpy`, но до сборки стилей, поэтому авторские файлы не перезаписываются.
@@ -60,13 +62,16 @@ cd studio
 npm install
 npm run tauri:dev        # запуск приложения (сам подхватит MSVC-окружение)
 npm run tauri:build      # установщик NSIS в src-tauri\target\release\bundle\nsis
+powershell -File scripts\build-release.ps1   # релиз: exe + установщик Inno + portable zip + SHA256
 ```
 
 `npm run tauri:dev` и `npm run tauri:build` вызывают `scripts\tauri.ps1`, который импортирует окружение Visual Studio
 и добавляет пути MSVC/Windows SDK — на этой машине VS стоит на нестандартном диске и без этого `link.exe` не находится.
 Для ручных команд используйте `scripts\cargo.ps1 check` / `scripts\cargo.ps1 build --features cli`.
 
-Артефакты релиза: `src-tauri\target\release\bundle\nsis\`.
+Артефакты релиза: `dist-release\` (установщик Inno Setup, портативный zip, `SHA256SUMS.txt`).
+Установщик ставится в профиль пользователя, проверяет WebView2, связывает `.rpyproj`
+и не требует прав администратора; Ren'Py SDK в него не входит.
 
 ---
 
@@ -89,19 +94,24 @@ studio/
 │       ├── validation.rs    # проверки ссылок, тупиков, недостижимых сцен + граф
 │       ├── importer.rs      # разбор .rpy → блоки (best effort)
 │       ├── sdk.rs           # поиск SDK, запуск, lint, сборка
+│       ├── bridge.rs        # локальный мост IDE↔игра для живого предпросмотра
 │       ├── mcp.rs           # MCP-сервер (Streamable HTTP, JSON-RPC)
 │       ├── watcher.rs       # наблюдение за папкой проекта
 │       ├── commands.rs      # IPC-команды Tauri
-│       └── cli.rs           # headless: --new / --export / --lint
+│       └── cli.rs           # headless: --new / --export / --lint / --preview
 ├── scripts/
 │   ├── cargo.ps1            # cargo с окружением MSVC
 │   ├── msvc-env.ps1         # поиск Visual Studio / Windows SDK
 │   ├── tauri.ps1            # tauri dev/build с окружением MSVC
+│   ├── build-release.ps1    # exe + установщик Inno + portable zip + SHA256
+│   ├── set-version.mjs      # единый источник версии (4 файла)
+│   ├── sign.ps1             # подпись установщика (нужен сертификат)
 │   ├── e2e.ps1              # создать проект → экспорт → Ren'Py lint
 │   ├── make_icon.py         # иконки приложения
 │   ├── make-fixture-assets.py # ассеты для e2e-фикстуры
 │   ├── check-i18n.mjs       # проверка полноты словарей
 │   └── cdp.mjs              # отладка UI через WebView2 DevTools (dev)
+├── installer/               # Inno Setup: renpy-studio.iss + cache WebView2
 └── tests/fixture/           # проект-фикстура для e2e
 ```
 
@@ -206,6 +216,7 @@ renpy-studio.exe --new  C:\novels\demo "Моя новелла" --sdk "C:\renpy-8
 renpy-studio.exe --import C:\games\the_question --title "The Question"
 renpy-studio.exe --export C:\novels\demo --force
 renpy-studio.exe --lint   C:\novels\demo
+renpy-studio.exe --preview C:\novels\demo main_menu --hold 15   # мост предпросмотра без GUI
 ```
 
 Сквозная проверка генератора: `scripts\e2e.ps1` создаёт проект, подставляет фикстуру, экспортирует и прогоняет официальный `renpy lint`.

@@ -12,3 +12,6 @@ src-tauri/gen/
 plugins/
 
 docs/HANDOFF-PROMPT.md
+
+dist-release/
+installer/cache/

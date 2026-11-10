@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "RenPy Studio",
-  "version": "0.4.0",
-  "identifier": "dev.renpystudio.app",
+  "version": "0.1.1",
+  "identifier": "dev.renpystudio.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -30,12 +30,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "RenPy Studio",
     "copyright": "MIT. Ren'Py is a trademark of the Ren'Py Project.",
     "shortDescription": "Visual no-code IDE for Ren'Py visual novels",
     "longDescription": "Build visual novels from blocks; RenPy Studio generates readable .rpy code and runs the game through your installed Ren'Py SDK.",
-    "icon": ["icons/icon.ico"],
+    "icon": [
+      "icons/icon.ico"
+    ],
     "resources": []
   }
 }

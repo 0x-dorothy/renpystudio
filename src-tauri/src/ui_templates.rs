@@ -11,6 +11,8 @@ use serde_json::Value;
 pub struct Ctx<'a> {
     pub width: u32,
     pub locales: &'a [String],
+    /// Primary locale of the project: default template texts follow it.
+    pub locale: String,
     pub accent: String,
     pub text: String,
     pub muted: String,
@@ -20,6 +22,15 @@ pub struct Ctx<'a> {
 impl Ctx<'_> {
     fn px(&self, base: f32) -> i32 {
         ((base * self.width.max(320) as f32) / 1280.0).round() as i32
+    }
+
+    /// Built-in template text in the project's language (ru defaults stay Russian).
+    fn tr(&self, ru: &str, en: &str) -> String {
+        if self.locale.trim().to_lowercase().starts_with("ru") {
+            ru.to_string()
+        } else {
+            en.to_string()
+        }
     }
 }
 
@@ -73,13 +84,6 @@ struct SaveLoadParams {
 
 impl SaveLoadParams {
     fn sane(mut self) -> Self {
-        if self.title.trim().is_empty() {
-            self.title = if self.mode == "load" {
-                "Загрузка".into()
-            } else {
-                "Сохранение".into()
-            };
-        }
         if self.columns == 0 {
             self.columns = 3;
         }
@@ -282,10 +286,12 @@ fn header(lines: &mut Lines, name: &str, title: &str, ctx: &Ctx, menu: bool) {
 }
 
 fn back_button(lines: &mut Lines, ctx: &Ctx, action: &str) {
+    let label = ctx.tr("Назад", "Back");
     lines.p(
         1,
         format!(
-            "textbutton \"Назад\" action {action} xalign 0.5 ypos 0.93 text_size {}",
+            "textbutton {} action {action} xalign 0.5 ypos 0.93 text_size {}",
+            quoted(&label),
             ctx.px(26.0)
         ),
     );
@@ -296,7 +302,14 @@ fn back_button(lines: &mut Lines, ctx: &Ctx, action: &str) {
 // ---------------------------------------------------------------------------
 
 fn render_save_load(name: &str, raw: SaveLoadParams, ctx: &Ctx) -> Vec<String> {
-    let p = raw.sane();
+    let mut p = raw.sane();
+    if p.title.trim().is_empty() {
+        p.title = if p.mode == "load" {
+            ctx.tr("Загрузка", "Load")
+        } else {
+            ctx.tr("Сохранение", "Save")
+        };
+    }
     let mut lines = Lines::new();
     header(&mut lines, name, &p.title, ctx, true);
     let slot_w = ctx.px(340.0);
@@ -368,12 +381,16 @@ fn render_save_load(name: &str, raw: SaveLoadParams, ctx: &Ctx) -> Vec<String> {
     lines.p(2, format!("textbutton \"→\" action FilePageNext() text_size {}", ctx.px(24.0)));
     lines.blank();
     back_button(&mut lines, ctx, "Return()");
-    lines.p(1, "# Подсказка");
+    lines.p(1, "# Hint");
     lines.p(
         1,
         format!(
-            "text \"Delete — удалить слот, клик — {}.\" xalign 0.5 ypos 0.965 size {} color {}",
-            if p.mode == "load" { "загрузить" } else { "перезаписать" },
+            "text {} xalign 0.5 ypos 0.965 size {} color {}",
+            quoted(&if p.mode == "load" {
+                ctx.tr("Delete — удалить слот, клик — загрузить.", "Delete — delete a slot, click — load.")
+            } else {
+                ctx.tr("Delete — удалить слот, клик — перезаписать.", "Delete — delete a slot, click — overwrite.")
+            }),
             ctx.px(16.0),
             quoted(&ctx.muted)
         ),
@@ -387,7 +404,7 @@ fn render_save_load(name: &str, raw: SaveLoadParams, ctx: &Ctx) -> Vec<String> {
 
 fn render_preferences(name: &str, raw: PreferencesParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Настройки".to_string()
+        ctx.tr("Настройки", "Preferences")
     } else {
         raw.title
     };
@@ -403,39 +420,39 @@ fn render_preferences(name: &str, raw: PreferencesParams, ctx: &Ctx) -> Vec<Stri
     // Text group.
     lines.p(2, "vbox:");
     lines.p(3, format!("spacing {}", ctx.px(10.0)));
-    lines.p(3, format!("text \"Текст\" size {} color {}", ctx.px(26.0), quoted(&ctx.accent)));
-    lines.p(3, format!("text \"Скорость текста\" size {} color {}", ctx.px(18.0), quoted(&ctx.muted)));
+    lines.p(3, format!("text {} size {} color {}", quoted(&ctx.tr("Текст", "Text")), ctx.px(26.0), quoted(&ctx.accent)));
+    lines.p(3, format!("text {} size {} color {}", quoted(&ctx.tr("Скорость текста", "Text Speed")), ctx.px(18.0), quoted(&ctx.muted)));
     lines.p(3, format!("bar value Preference(\"text speed\") xsize {}", ctx.px(360.0)));
-    lines.p(3, format!("text \"Автопрокрутка\" size {} color {}", ctx.px(18.0), quoted(&ctx.muted)));
+    lines.p(3, format!("text {} size {} color {}", quoted(&ctx.tr("Автопрокрутка", "Auto-Advance")), ctx.px(18.0), quoted(&ctx.muted)));
     lines.p(3, format!("bar value Preference(\"auto-forward time\") xsize {}", ctx.px(360.0)));
-    lines.p(3, format!("textbutton \"Пропуск непрочитанного\" action Preference(\"skip\", \"toggle\") text_size {}", ctx.px(20.0)));
-    lines.p(3, format!("textbutton \"Пропуск после выборов\" action Preference(\"after choices\", \"toggle\") text_size {}", ctx.px(20.0)));
+    lines.p(3, format!("textbutton {} action Preference(\"skip\", \"toggle\") text_size {}", quoted(&ctx.tr("Пропуск непрочитанного", "Skip Unseen")), ctx.px(20.0)));
+    lines.p(3, format!("textbutton {} action Preference(\"after choices\", \"toggle\") text_size {}", quoted(&ctx.tr("Пропуск после выборов", "Skip After Choices")), ctx.px(20.0)));
     lines.blank();
 
     // Volume group.
     lines.p(2, "vbox:");
     lines.p(3, format!("spacing {}", ctx.px(10.0)));
-    lines.p(3, format!("text \"Звук\" size {} color {}", ctx.px(26.0), quoted(&ctx.accent)));
+    lines.p(3, format!("text {} size {} color {}", quoted(&ctx.tr("Звук", "Audio")), ctx.px(26.0), quoted(&ctx.accent)));
     lines.p(3, "if config.has_music:");
-    lines.p(4, format!("text \"Музыка\" size {} color {}", ctx.px(18.0), quoted(&ctx.muted)));
+    lines.p(4, format!("text {} size {} color {}", quoted(&ctx.tr("Музыка", "Music")), ctx.px(18.0), quoted(&ctx.muted)));
     lines.p(4, format!("bar value Preference(\"music volume\") xsize {}", ctx.px(360.0)));
     lines.p(3, "if config.has_sound:");
-    lines.p(4, format!("text \"Эффекты\" size {} color {}", ctx.px(18.0), quoted(&ctx.muted)));
+    lines.p(4, format!("text {} size {} color {}", quoted(&ctx.tr("Эффекты", "Sound Effects")), ctx.px(18.0), quoted(&ctx.muted)));
     lines.p(4, format!("bar value Preference(\"sound volume\") xsize {}", ctx.px(360.0)));
     lines.p(3, "if config.has_voice:");
-    lines.p(4, format!("text \"Озвучка\" size {} color {}", ctx.px(18.0), quoted(&ctx.muted)));
+    lines.p(4, format!("text {} size {} color {}", quoted(&ctx.tr("Озвучка", "Voice")), ctx.px(18.0), quoted(&ctx.muted)));
     lines.p(4, format!("bar value Preference(\"voice volume\") xsize {}", ctx.px(360.0)));
-    lines.p(3, format!("textbutton \"Выключить всё\" action Preference(\"all mute\", \"toggle\") text_size {}", ctx.px(20.0)));
+    lines.p(3, format!("textbutton {} action Preference(\"all mute\", \"toggle\") text_size {}", quoted(&ctx.tr("Выключить всё", "Mute All")), ctx.px(20.0)));
     lines.blank();
 
     // Display.
     lines.p(2, "vbox:");
     lines.p(3, format!("spacing {}", ctx.px(10.0)));
-    lines.p(3, format!("text \"Экран\" size {} color {}", ctx.px(26.0), quoted(&ctx.accent)));
-    lines.p(3, format!("textbutton \"В окне\" action Preference(\"display\", \"window\") text_size {}", ctx.px(20.0)));
-    lines.p(3, format!("textbutton \"Полный экран\" action Preference(\"display\", \"fullscreen\") text_size {}", ctx.px(20.0)));
+    lines.p(3, format!("text {} size {} color {}", quoted(&ctx.tr("Экран", "Display")), ctx.px(26.0), quoted(&ctx.accent)));
+    lines.p(3, format!("textbutton {} action Preference(\"display\", \"window\") text_size {}", quoted(&ctx.tr("В окне", "Window")), ctx.px(20.0)));
+    lines.p(3, format!("textbutton {} action Preference(\"display\", \"fullscreen\") text_size {}", quoted(&ctx.tr("Полный экран", "Fullscreen")), ctx.px(20.0)));
     if raw.show_language && ctx.locales.len() > 1 {
-        lines.p(3, format!("text \"Язык\" size {} color {}", ctx.px(22.0), quoted(&ctx.accent)));
+        lines.p(3, format!("text {} size {} color {}", quoted(&ctx.tr("Язык", "Language")), ctx.px(22.0), quoted(&ctx.accent)));
         lines.p(3, "hbox:");
         lines.p(4, format!("spacing {}", ctx.px(10.0)));
         for locale in ctx.locales {
@@ -461,7 +478,7 @@ fn render_preferences(name: &str, raw: PreferencesParams, ctx: &Ctx) -> Vec<Stri
 
 fn render_gallery(name: &str, raw: GalleryParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Галерея".to_string()
+        ctx.tr("Галерея", "Gallery")
     } else {
         raw.title
     };
@@ -496,7 +513,8 @@ fn render_gallery(name: &str, raw: GalleryParams, ctx: &Ctx) -> Vec<String> {
         lines.p(
             1,
             format!(
-                "text \"Добавьте картинки в настройках шаблона.\" xalign 0.5 yalign 0.5 size {} color {}",
+                "text {} xalign 0.5 yalign 0.5 size {} color {}",
+                quoted(&ctx.tr("Добавьте картинки в настройках шаблона.", "Add images in the template settings.")),
                 ctx.px(22.0),
                 quoted(&ctx.muted)
             ),
@@ -541,7 +559,8 @@ fn render_gallery(name: &str, raw: GalleryParams, ctx: &Ctx) -> Vec<String> {
     lines.p(
         1,
         format!(
-            "textbutton \"Закрыть\" action Hide(\"{name}_view\") xalign 0.5 ypos 0.94 text_size {}",
+            "textbutton {} action Hide(\"{name}_view\") xalign 0.5 ypos 0.94 text_size {}",
+            quoted(&ctx.tr("Закрыть", "Close")),
             ctx.px(24.0)
         ),
     );
@@ -554,7 +573,7 @@ fn render_gallery(name: &str, raw: GalleryParams, ctx: &Ctx) -> Vec<String> {
 
 fn render_music(name: &str, raw: MusicParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Музыка".to_string()
+        ctx.tr("Музыка", "Music")
     } else {
         raw.title
     };
@@ -582,7 +601,8 @@ fn render_music(name: &str, raw: MusicParams, ctx: &Ctx) -> Vec<String> {
         lines.p(
             1,
             format!(
-                "text \"Добавьте треки в настройках шаблона.\" xalign 0.5 yalign 0.5 size {} color {}",
+                "text {} xalign 0.5 yalign 0.5 size {} color {}",
+                quoted(&ctx.tr("Добавьте треки в настройках шаблона.", "Add tracks in the template settings.")),
                 ctx.px(22.0),
                 quoted(&ctx.muted)
             ),
@@ -606,8 +626,8 @@ fn render_music(name: &str, raw: MusicParams, ctx: &Ctx) -> Vec<String> {
     lines.p(2, "xalign 0.5");
     lines.p(2, "ypos 0.88");
     lines.p(2, format!("spacing {}", ctx.px(18.0)));
-    lines.p(2, format!("textbutton \"Стоп\" action Stop(\"music\", fadeout=0.5) text_size {}", ctx.px(24.0)));
-    lines.p(2, format!("textbutton \"Назад\" action Return() text_size {}", ctx.px(24.0)));
+    lines.p(2, format!("textbutton {} action Stop(\"music\", fadeout=0.5) text_size {}", quoted(&ctx.tr("Стоп", "Stop")), ctx.px(24.0)));
+    lines.p(2, format!("textbutton {} action Return() text_size {}", quoted(&ctx.tr("Назад", "Back")), ctx.px(24.0)));
     lines.out
 }
 
@@ -617,7 +637,7 @@ fn render_music(name: &str, raw: MusicParams, ctx: &Ctx) -> Vec<String> {
 
 fn render_chapters(name: &str, raw: ChaptersParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Главы".to_string()
+        ctx.tr("Главы", "Chapters")
     } else {
         raw.title
     };
@@ -632,7 +652,8 @@ fn render_chapters(name: &str, raw: ChaptersParams, ctx: &Ctx) -> Vec<String> {
         lines.p(
             1,
             format!(
-                "text \"Добавьте главы в настройках шаблона.\" xalign 0.5 yalign 0.5 size {} color {}",
+                "text {} xalign 0.5 yalign 0.5 size {} color {}",
+                quoted(&ctx.tr("Добавьте главы в настройках шаблона.", "Add chapters in the template settings.")),
                 ctx.px(22.0),
                 quoted(&ctx.muted)
             ),
@@ -696,7 +717,7 @@ fn render_notification(name: &str, raw: NotificationParams, ctx: &Ctx) -> Vec<St
 
 fn render_hud(name: &str, raw: HudParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Глава 1".to_string()
+        ctx.tr("Глава 1", "Chapter 1")
     } else {
         raw.title
     };
@@ -727,8 +748,8 @@ fn render_hud(name: &str, raw: HudParams, ctx: &Ctx) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn render_confirm(raw: ConfirmParams, ctx: &Ctx) -> Vec<String> {
-    let yes = if raw.yes.trim().is_empty() { "Да".to_string() } else { raw.yes };
-    let no = if raw.no.trim().is_empty() { "Нет".to_string() } else { raw.no };
+    let yes = if raw.yes.trim().is_empty() { ctx.tr("Да", "Yes") } else { raw.yes };
+    let no = if raw.no.trim().is_empty() { ctx.tr("Нет", "No") } else { raw.no };
     let mut lines = Lines::new();
     lines.p(0, "screen confirm(message, yes_action, no_action):");
     lines.p(1, "modal True");
@@ -757,7 +778,7 @@ fn render_confirm(raw: ConfirmParams, ctx: &Ctx) -> Vec<String> {
 
 fn render_stats(name: &str, raw: StatsParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Статистика".to_string()
+        ctx.tr("Статистика", "Stats").to_string()
     } else {
         raw.title
     };
@@ -772,7 +793,8 @@ fn render_stats(name: &str, raw: StatsParams, ctx: &Ctx) -> Vec<String> {
         lines.p(
             1,
             format!(
-                "text \"Добавьте показатели в настройках шаблона.\" xalign 0.5 yalign 0.5 size {} color {}",
+                "text {} xalign 0.5 yalign 0.5 size {} color {}",
+                quoted(&ctx.tr("Добавьте показатели в настройках шаблона.", "Add stats in the template settings.")),
                 ctx.px(22.0),
                 quoted(&ctx.muted)
             ),
@@ -806,7 +828,7 @@ fn render_stats(name: &str, raw: StatsParams, ctx: &Ctx) -> Vec<String> {
 
 fn render_journal(name: &str, raw: JournalParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Дневник".to_string()
+        ctx.tr("Дневник", "Journal").to_string()
     } else {
         raw.title
     };
@@ -823,7 +845,12 @@ fn render_journal(name: &str, raw: JournalParams, ctx: &Ctx) -> Vec<String> {
     if raw.entries.is_empty() {
         lines.p(
             3,
-            format!("text \"Пока пусто.\" size {} color {}", ctx.px(22.0), quoted(&ctx.muted)),
+            format!(
+                "text {} size {} color {}",
+                quoted(&ctx.tr("Пока пусто.", "Nothing here yet.")),
+                ctx.px(22.0),
+                quoted(&ctx.muted)
+            ),
         );
     } else {
         for entry in &raw.entries {
@@ -845,7 +872,7 @@ fn render_journal(name: &str, raw: JournalParams, ctx: &Ctx) -> Vec<String> {
 
 fn render_inventory(name: &str, raw: InventoryParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Инвентарь".to_string()
+        ctx.tr("Инвентарь", "Inventory").to_string()
     } else {
         raw.title
     };
@@ -873,7 +900,8 @@ fn render_inventory(name: &str, raw: InventoryParams, ctx: &Ctx) -> Vec<String> 
         lines.p(
             1,
             format!(
-                "text \"Добавьте предметы в настройках шаблона.\" xalign 0.5 yalign 0.5 size {} color {}",
+                "text {} xalign 0.5 yalign 0.5 size {} color {}",
+                quoted(&ctx.tr("Добавьте предметы в настройках шаблона.", "Add items in the template settings.")),
                 ctx.px(22.0),
                 quoted(&ctx.muted)
             ),
@@ -900,7 +928,7 @@ fn render_inventory(name: &str, raw: InventoryParams, ctx: &Ctx) -> Vec<String> 
 
 fn render_phone(name: &str, raw: PhoneParams, ctx: &Ctx) -> Vec<String> {
     let title = if raw.title.trim().is_empty() {
-        "Сообщения".to_string()
+        ctx.tr("Сообщения", "Messages").to_string()
     } else {
         raw.title
     };
@@ -917,7 +945,12 @@ fn render_phone(name: &str, raw: PhoneParams, ctx: &Ctx) -> Vec<String> {
     if raw.messages.is_empty() {
         lines.p(
             3,
-            format!("text \"Пока пусто.\" size {} color {}", ctx.px(22.0), quoted(&ctx.muted)),
+            format!(
+                "text {} size {} color {}",
+                quoted(&ctx.tr("Пока пусто.", "Nothing here yet.")),
+                ctx.px(22.0),
+                quoted(&ctx.muted)
+            ),
         );
     } else {
         for message in &raw.messages {
