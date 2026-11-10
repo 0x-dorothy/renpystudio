@@ -106,6 +106,13 @@ export const api = {
     optionId?: string | null;
     branch?: "then" | "else" | null;
   }) => invoke<StateEnvelope>("node_retarget", args),
+  pluginsList: () => invoke<import("./types").PluginsPayload>("plugins_list"),
+  pluginEnable: (id: string) => invoke<StateEnvelope>("plugin_enable", { id }),
+  pluginDisable: (id: string) => invoke<StateEnvelope>("plugin_disable", { id }),
+  pluginDocs: (id: string) => invoke<string | null>("plugin_docs", { id }),
+  pluginsRoot: () => invoke<string>("plugins_root"),
+  ensureSpriteFolder: (relative: string) =>
+    invoke<string>("ensure_sprite_folder", { relative }),
 
   mcpStart: (port?: number) => invoke<{ running: boolean; port: number }>("mcp_start", { port }),
   mcpStop: () => invoke<{ running: boolean }>("mcp_stop"),

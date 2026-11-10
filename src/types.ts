@@ -1,4 +1,4 @@
-// Mirrors the Rust model (serde camelCase). Keep in sync with src-tauri/src/model.rs.
+﻿// Mirrors the Rust model (serde camelCase). Keep in sync with src-tauri/src/model.rs.
 
 export type LocalizedText = Record<string, string>;
 
@@ -26,6 +26,7 @@ export interface Character {
   color: string | null;
   avatar: string | null;
   spritePrefix: string | null;
+  spriteFolder?: string | null;
   voiceTag: string | null;
   prefix: string | null;
   suffix: string | null;
@@ -110,6 +111,7 @@ export interface Project {
   variables: Variable[];
   scenes: Scene[];
   initScript: string;
+  plugins?: EnabledPlugin[];
   ui: UiConfig;
 }
 
@@ -333,4 +335,36 @@ export interface FileDiff {
   path: string;
   status: "modified" | "added" | "removed";
   lines: string[];
+}
+
+export interface PluginFile {
+  source: string;
+  target: string;
+  size: number;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  kind: "file" | "folder" | "zip";
+  source: string;
+  size: number;
+  files: PluginFile[];
+  snippet: string | null;
+  docs: string | null;
+  enabled: boolean;
+}
+
+export interface PluginsPayload {
+  root: string;
+  plugins: PluginInfo[];
+}
+
+export interface EnabledPlugin {
+  id: string;
+  name: string;
+  kind: string;
+  files: string[];
+  enabledAt: string;
 }

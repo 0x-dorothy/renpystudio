@@ -1869,3 +1869,116 @@ pub fn node_retarget(
     }
     finish_mutation(&state, "edge-retargeted")
 }
+
+// ---------------------------------------------------------------------------
+// Plugins
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsPayload {
+    pub root: String,
+    pub plugins: Vec<crate::plugins::PluginInfo>,
+}
+
+#[tauri::command]
+pub fn plugins_list(state: State<'_, Shared>) -> Result<PluginsPayload, String> {
+    let root = crate::plugins::plugins_root();
+    let mut plugins = crate::plugins::scan(&root);
+    let enabled: std::collections::HashSet<String> = lock_store(&state)?
+        .project
+        .plugins
+        .iter()
+        .map(|plugin| plugin.id.clone())
+        .collect();
+    for plugin in &mut plugins {
+        plugin.enabled = enabled.contains(&plugin.id);
+    }
+    Ok(PluginsPayload {
+        root: root.display().to_string(),
+        plugins,
+    })
+}
+
+#[tauri::command]
+pub fn plugin_enable(state: State<'_, Shared>, id: String) -> Result<StateEnvelope, String> {
+    let root = state.root().ok_or("Проект не открыт")?;
+    let plugins_root = crate::plugins::plugins_root();
+    let plugins = crate::plugins::scan(&plugins_root);
+    let plugin = plugins
+        .into_iter()
+        .find(|plugin| plugin.id == id)
+        .ok_or("Плагин не найден в папке plugins")?;
+    let files = crate::plugins::install(&root, &plugin)?;
+    {
+        let mut store = lock_store(&state)?;
+        store.checkpoint();
+        store.project.plugins.retain(|entry| entry.id != plugin.id);
+        store.project.plugins.push(crate::model::PluginRef {
+            id: plugin.id.clone(),
+            name: plugin.name.clone(),
+            kind: plugin.kind.clone(),
+            files: files.clone(),
+            enabled_at: crate::model::now_iso(),
+        });
+        store.save()?;
+    }
+    let _ = crate::sdk::write_project_settings(&root, None).ok();
+    state.emit_project_changed("plugin-enabled");
+    Ok(envelope(&state)?)
+}
+
+#[tauri::command]
+pub fn plugin_disable(state: State<'_, Shared>, id: String) -> Result<StateEnvelope, String> {
+    let root = state.root().ok_or("Проект не открыт")?;
+    {
+        let mut store = lock_store(&state)?;
+        let files = store
+            .project
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id == id)
+            .map(|plugin| plugin.files.clone())
+            .ok_or("Плагин не включён в проект")?;
+        crate::plugins::uninstall(&root, &files);
+        store.checkpoint();
+        store.project.plugins.retain(|plugin| plugin.id != id);
+        store.save()?;
+    }
+    state.emit_project_changed("plugin-disabled");
+    envelope(&state)
+}
+
+#[tauri::command]
+pub fn plugin_docs(id: String) -> Result<Option<String>, String> {
+    let root = crate::plugins::plugins_root();
+    let plugins = crate::plugins::scan(&root);
+    let plugin = plugins
+        .into_iter()
+        .find(|plugin| plugin.id == id)
+        .ok_or("Плагин не найден")?;
+    Ok(crate::plugins::plugin_docs(&plugin))
+}
+
+#[tauri::command]
+pub fn plugins_root() -> Result<String, String> {
+    Ok(crate::plugins::plugins_root().display().to_string())
+}
+
+#[tauri::command]
+pub fn ensure_sprite_folder(
+    state: State<'_, Shared>,
+    relative: String,
+) -> Result<String, String> {
+    let root = state.root().ok_or("Проект не открыт")?;
+    let cleaned = relative.trim().replace('\\', "/");
+    let mut path = root.join("game").join("images");
+    for part in cleaned.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            continue;
+        }
+        path = path.join(part);
+    }
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}

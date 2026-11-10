@@ -34,6 +34,7 @@ export function BlockForm({ node }: { node: StudioNode }) {
   const project = useStudio((s) => s.project);
   const editLocale = useStudio((s) => s.editLocale);
   const updateNodeParams = useStudio((s) => s.updateNodeParams);
+  const assets = useStudio((s) => s.assets);
   const [draft, setDraft] = useState<Record<string, unknown>>(node.params);
   const [pending, setPending] = useState(false);
   const timer = useRef<number | null>(null);
@@ -78,6 +79,18 @@ export function BlockForm({ node }: { node: StudioNode }) {
   const updateLocalized = (key: string, value: string) => {
     const current = (draft[key] as Record<string, string> | undefined) ?? {};
     update(key, { ...current, [editLocale]: value });
+  };
+
+  const updateMany = (patch: Record<string, unknown>) => {
+    const next = { ...draftRef.current, ...patch };
+    setDraft(next);
+    setPending(true);
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      setPending(false);
+      void updateNodeParams(node.id, next);
+    }, 420);
   };
 
   const sceneOptions = useMemo(() => {
@@ -341,6 +354,34 @@ export function BlockForm({ node }: { node: StudioNode }) {
 
   return (
     <div className="animate-in">
+      {project && (node.kind === "show" || node.kind === "pose")
+        ? (() => {
+            const character = project.characters.find((entry) => entry.id === String(draft.who));
+            const folder = character?.spriteFolder?.replace(/^\/+|\/+$/g, "");
+            if (!folder) return null;
+            const prefix = `game/images/${folder}/`;
+            const poses = assets.filter((asset) => asset.kind === "image" && asset.path.startsWith(prefix));
+            if (poses.length === 0) return null;
+            return (
+              <Field label={t("block.pose") + " · " + folder} hint={t("characters.spriteFolderHint")}>
+                <Select
+                  value={String(draft.asset ?? "")}
+                  onChange={(event) => {
+                    const path = event.target.value;
+                    if (!path) return;
+                    const relative = path.slice(prefix.length).replace(/\.[^.]+$/, "");
+                    updateMany({ image: relative.split("/").join(" "), asset: path });
+                  }}
+                  options={poses.map((asset) => ({
+                    value: asset.path,
+                    label: asset.path.slice(prefix.length),
+                  }))}
+                  placeholder="—"
+                />
+              </Field>
+            );
+          })()
+        : null}
       {def.fields.map(renderField)}
       {node.locked ? (
         <div className="chip-warn chip mb-2">{t("inspector.locked")}</div>

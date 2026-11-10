@@ -1,4 +1,4 @@
-#![cfg_attr(all(not(debug_assertions), not(feature = "cli")), windows_subsystem = "windows")]
+﻿#![cfg_attr(all(not(debug_assertions), not(feature = "cli")), windows_subsystem = "windows")]
 
 mod app;
 mod assets;
@@ -10,6 +10,7 @@ mod generator;
 mod importer;
 mod mcp;
 mod model;
+mod plugins;
 mod sdk;
 mod settings;
 mod store;
@@ -27,3 +28,4 @@ fn main() {
     }
     app::run();
 }
+

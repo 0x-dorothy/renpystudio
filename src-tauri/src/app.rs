@@ -1,4 +1,4 @@
-//! Application wiring: plugins, managed state, IPC handler, asset protocol.
+﻿//! Application wiring: plugins, managed state, IPC handler, asset protocol.
 
 use crate::commands::{self, AppState, Shared};
 use crate::settings::Settings;
@@ -183,6 +183,12 @@ pub fn run() {
             commands::project_translate,
             commands::external_diff,
             commands::node_retarget,
+            commands::plugins_list,
+            commands::plugin_enable,
+            commands::plugin_disable,
+            commands::plugin_docs,
+            commands::plugins_root,
+            commands::ensure_sprite_folder,
             commands::snapshot_create,
             commands::snapshot_list,
             commands::snapshot_restore,

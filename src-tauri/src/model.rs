@@ -42,6 +42,9 @@ pub struct Project {
     pub variables: Vec<Variable>,
     #[serde(default)]
     pub scenes: Vec<Scene>,
+    /// Plugins copied into this project (files live in game/, state lives here).
+    #[serde(default)]
+    pub plugins: Vec<PluginRef>,
     /// Raw Ren'Py statements emitted verbatim into `game/zz_init.rpy`
     /// (imported `screen`/`transform`/`init python`, or hand-written glue).
     #[serde(default)]
@@ -63,6 +66,7 @@ impl Default for Project {
             characters: Vec::new(),
             variables: Vec::new(),
             scenes: Vec::new(),
+            plugins: Vec::new(),
             init_script: String::new(),
             ui: UiConfig::default(),
         }
@@ -133,6 +137,9 @@ pub struct Character {
     pub name: String,
     #[serde(default)]
     pub kind: CharacterKind,
+    /// Folder with this character's sprites, relative to `game/images`.
+    #[serde(default)]
+    pub sprite_folder: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
     /// Avatar / side image, path relative to `game/`.
@@ -701,4 +708,18 @@ impl Project {
     pub fn touch(&mut self) {
         self.meta.updated_at = now_iso();
     }
+}
+
+/// A plugin copied into the project. Files live under `game/`; this is the state.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginRef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+    #[serde(default)]
+    pub enabled_at: String,
 }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import i18n, { setLanguage } from "./i18n";
+import { slugify } from "./util";
 import type {
   AssetInfo,
   Bootstrap,
@@ -24,7 +25,7 @@ import type {
   Variable,
 } from "./types";
 
-export type Tab = "scene" | "graph" | "characters" | "variables" | "screens" | "assets";
+export type Tab = "scene" | "graph" | "characters" | "variables" | "screens" | "assets" | "plugins";
 export type ModalKind =
   | "none"
   | "settings"
@@ -34,7 +35,8 @@ export type ModalKind =
   | "build"
   | "lint"
   | "conflicts"
-  | "diff";
+  | "diff"
+  | "pluginDocs";
 
 export interface Toast {
   id: number;
@@ -67,6 +69,9 @@ interface StudioState {
   busyLabel: string | null;
   externalChange: ExternalChange | null;
   diffs: import("./types").FileDiff[] | null;
+  plugins: import("./types").PluginInfo[];
+  pluginsRoot: string;
+  pluginDocs: { name: string; text: string } | null;
   toasts: Toast[];
   mcp: { running: boolean; port?: number; url?: string };
   welcomeStep: "home" | "new" | "open";
@@ -145,6 +150,12 @@ interface StudioState {
     optionId?: string | null;
     branch?: "then" | "else" | null;
   }) => Promise<void>;
+  refreshPlugins: () => Promise<void>;
+  enablePlugin: (id: string) => Promise<void>;
+  disablePlugin: (id: string) => Promise<void>;
+  showPluginDocs: (id: string) => Promise<void>;
+  insertPluginSnippet: (snippet: string) => Promise<void>;
+  ensureCharacterFolder: (character: import("./types").Character) => Promise<void>;
   newProject: (parent: string, title: string) => Promise<void>;
   createInExisting: (path: string, title: string) => Promise<void>;
   closeProject: () => Promise<void>;
@@ -304,6 +315,9 @@ export const useStudio = create<StudioState>((set, get) => {
     busyLabel: null,
     externalChange: null,
     diffs: null,
+    plugins: [],
+    pluginsRoot: "",
+    pluginDocs: null,
     toasts: [],
     mcp: { running: false },
     welcomeStep: "home",
@@ -663,6 +677,63 @@ export const useStudio = create<StudioState>((set, get) => {
       if (env) {
         applyEnvelope(env);
         void get().refreshGraph();
+      }
+    },
+    refreshPlugins: async () => {
+      try {
+        const payload = await api.pluginsList();
+        set({ plugins: payload.plugins, pluginsRoot: payload.root });
+      } catch {
+        /* plugins folder may be absent */
+      }
+    },
+    enablePlugin: async (id) => {
+      const env = await guarded(() => api.pluginEnable(id));
+      if (env) {
+        applyEnvelope(env);
+        await get().refreshPlugins();
+        get().toast("success", i18n.t("plugins.enabled"));
+      }
+    },
+    disablePlugin: async (id) => {
+      const env = await guarded(() => api.pluginDisable(id));
+      if (env) {
+        applyEnvelope(env);
+        await get().refreshPlugins();
+        get().toast("info", i18n.t("plugins.disabled"));
+      }
+    },
+    showPluginDocs: async (id) => {
+      const text = await guarded(() => api.pluginDocs(id));
+      if (text) {
+        const name = get().plugins.find((plugin) => plugin.id === id)?.name ?? id;
+        set({ pluginDocs: { name, text }, modal: "pluginDocs" });
+      } else {
+        get().toast("info", i18n.t("plugins.noDocs"));
+      }
+    },
+    insertPluginSnippet: async (snippet) => {
+      const sceneId = get().activeSceneId;
+      if (!sceneId) {
+        get().toast("error", i18n.t("error.projectNotOpen"));
+        return;
+      }
+      const env = await guarded(() =>
+        api.addNode(sceneId, "code", undefined, { code: snippet, language: "renpy" }),
+      );
+      if (env) {
+        applyEnvelope(env);
+        get().toast("success", i18n.t("plugins.snippetAdded"));
+      }
+    },
+    ensureCharacterFolder: async (character) => {
+      const folder = character.spriteFolder?.trim() || `characters/${slugify(character.name || "hero")}`;
+      try {
+        const absolute = await api.ensureSpriteFolder(folder);
+        await get().saveCharacter({ ...character, spriteFolder: folder });
+        await api.revealInExplorer(absolute);
+      } catch (error) {
+        fail(error);
       }
     },
     newProject: async (parent, title) => {

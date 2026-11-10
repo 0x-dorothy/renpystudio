@@ -236,6 +236,7 @@ function CharacterEditor({ character }: { character: Character }) {
   const { t } = useTranslation();
   const save = useStudio((s) => s.saveCharacter);
   const remove = useStudio((s) => s.deleteCharacter);
+  const ensureFolder = useStudio((s) => s.ensureCharacterFolder);
   const assets = useStudio((s) => s.assets);
   const [draft, setDraft] = useDebouncedValue(character.id, character, (value) => {
     void save(value);
@@ -291,6 +292,19 @@ function CharacterEditor({ character }: { character: Character }) {
           value={draft.spritePrefix ?? ""}
           onChange={(event) => setDraft({ ...draft, spritePrefix: event.target.value })}
         />
+      </Field>
+      <Field label={t("characters.spriteFolder")} hint={t("characters.spriteFolderHint")}>
+        <div className="flex gap-2">
+          <Input
+            className="mono text-[12px]"
+            value={draft.spriteFolder ?? ""}
+            placeholder={`characters/${(draft.spritePrefix || "hero").toLowerCase()}`}
+            onChange={(event) => setDraft({ ...draft, spriteFolder: event.target.value })}
+          />
+          <Button size="sm" variant="ghost" onClick={() => void ensureFolder(draft)}>
+            {t("characters.openFolder")}
+          </Button>
+        </div>
       </Field>
       <Field label={t("characters.avatar")}>
         <Select

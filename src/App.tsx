@@ -5,6 +5,7 @@ import {
   GitBranch,
   Image as ImageIcon,
   LayoutDashboard,
+  Puzzle,
   SlidersHorizontal,
   UserRound,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { CharactersTab } from "./components/CharactersTab";
 import { VariablesTab } from "./components/VariablesTab";
 import { AssetsTab } from "./components/AssetsTab";
 import { ScreensTab } from "./components/ScreensTab";
+import { PluginsTab } from "./components/PluginsTab";
 import { Welcome } from "./components/Welcome";
 import { StudioModals } from "./components/Modals";
 import { HistoryModal } from "./components/HistoryModal";
@@ -32,6 +34,7 @@ const TABS: { id: Tab; icon: typeof FileCode2; labelKey: string }[] = [
   { id: "characters", icon: UserRound, labelKey: "nav.characters" },
   { id: "variables", icon: SlidersHorizontal, labelKey: "nav.variables" },
   { id: "assets", icon: ImageIcon, labelKey: "nav.assets" },
+  { id: "plugins", icon: Puzzle, labelKey: "plugins.title" },
 ];
 
 export default function App() {
@@ -211,6 +214,7 @@ export default function App() {
                 {tab === "characters" ? <CharactersTab /> : null}
                 {tab === "variables" ? <VariablesTab /> : null}
                 {tab === "assets" ? <AssetsTab /> : null}
+                {tab === "plugins" ? <PluginsTab /> : null}
               </div>
             </main>
             <Inspector />

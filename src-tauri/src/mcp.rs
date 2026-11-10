@@ -799,6 +799,7 @@ fn call_tool(state: &AppState, name: &str, args: &Value) -> Result<Value, String
                     id: new_id(),
                     name: String::new(),
                     kind: CharacterKind::Character,
+                    sprite_folder: None,
                     color: None,
                     avatar: None,
                     sprite_prefix: None,

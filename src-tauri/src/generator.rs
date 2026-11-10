@@ -1403,6 +1403,7 @@ mod tests {
             id: "ch_mira".into(),
             name: "Мира".into(),
             kind: CharacterKind::Character,
+            sprite_folder: None,
             color: Some("#e96aa5".into()),
             avatar: None,
             sprite_prefix: Some("mira".into()),

@@ -30,6 +30,7 @@ export function StudioModals() {
       <LintModal />
       <ConflictsModal />
       <DiffModal />
+      <PluginDocsModal />
       <ImportModal />
     </>
   );
@@ -740,6 +741,32 @@ function DiffModal() {
           ))}
         </div>
       )}
+    </Modal>
+  );
+}
+
+/* ── Plugin docs ───────────────────────────────────────────────────── */
+
+function PluginDocsModal() {
+  const { t } = useTranslation();
+  const open = useStudio((s) => s.modal) === "pluginDocs";
+  const close = useStudio((s) => s.closeModal);
+  const docs = useStudio((s) => s.pluginDocs);
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title={docs?.name ?? t("plugins.docs")}
+      width={820}
+      footer={
+        <Button variant="ghost" onClick={close}>
+          {t("common.close")}
+        </Button>
+      }
+    >
+      <pre className="mono max-h-[520px] whitespace-pre-wrap text-[11.5px] leading-relaxed text-[var(--muted)]">
+        {docs?.text ?? "—"}
+      </pre>
     </Modal>
   );
 }
