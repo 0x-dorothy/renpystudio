@@ -4,12 +4,14 @@ import {
   Image as ImageIcon,
   MousePointerClick,
   Music,
+  Play,
   Plus,
   Sparkles,
   Trash2,
   Type as TypeIcon,
 } from "lucide-react";
 import { useStudio } from "../store";
+import { api } from "../api";
 import { Button, Checkbox, Field, IconButton, Input, Segmented, Select } from "./ui";
 import { useDebouncedValue } from "../hooks";
 import { assetUrl, clamp, newId } from "../util";
@@ -90,6 +92,264 @@ const TRANSITIONS = [
 ];
 
 const ACTIONS = ["jump", "return", "start", "load", "save", "preferences", "about", "quit", "show", "hide", "none"];
+
+type TemplateField =
+  | { key: string; type: "text" | "number" | "checkbox"; labelKey: string }
+  | { key: string; type: "select"; labelKey: string; options: { value: string; labelKey: string }[] }
+  | {
+      key: string;
+      type: "list";
+      labelKey: string;
+      item: { key: string; type: "text" | "image" | "audio"; labelKey: string }[];
+      defaults: Record<string, unknown>;
+    };
+
+interface ScreenTemplate {
+  id: string;
+  labelKey: string;
+  hintKey: string;
+  name: string;
+  fields: TemplateField[];
+  defaults: Record<string, unknown>;
+}
+
+const SCREEN_TEMPLATES: ScreenTemplate[] = [
+  {
+    id: "save_load",
+    labelKey: "tpl.save_load",
+    hintKey: "tpl.save_load.hint",
+    name: "save_menu",
+    defaults: { mode: "save", title: "", columns: 3, rows: 2, thumbnails: true, deleteKey: true },
+    fields: [
+      {
+        key: "mode",
+        type: "select",
+        labelKey: "tpl.mode",
+        options: [
+          { value: "save", labelKey: "gui.action.save" },
+          { value: "load", labelKey: "gui.action.load" },
+        ],
+      },
+      { key: "title", type: "text", labelKey: "field.title" },
+      { key: "columns", type: "number", labelKey: "gui.cols" },
+      { key: "rows", type: "number", labelKey: "gui.rows" },
+      { key: "thumbnails", type: "checkbox", labelKey: "tpl.thumbnails" },
+      { key: "deleteKey", type: "checkbox", labelKey: "tpl.deleteKey" },
+    ],
+  },
+  {
+    id: "preferences",
+    labelKey: "tpl.preferences",
+    hintKey: "tpl.preferences.hint",
+    name: "studio_preferences",
+    defaults: { title: "", showLanguage: true },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      { key: "showLanguage", type: "checkbox", labelKey: "tpl.showLanguage" },
+    ],
+  },
+  {
+    id: "gallery",
+    labelKey: "tpl.gallery",
+    hintKey: "tpl.gallery.hint",
+    name: "studio_gallery",
+    defaults: { title: "", columns: 3, items: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      { key: "columns", type: "number", labelKey: "gui.cols" },
+      {
+        key: "items",
+        type: "list",
+        labelKey: "tpl.items",
+        defaults: { image: null, title: "" },
+        item: [
+          { key: "image", type: "image", labelKey: "field.asset" },
+          { key: "title", type: "text", labelKey: "field.title" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "music_room",
+    labelKey: "tpl.music_room",
+    hintKey: "tpl.music_room.hint",
+    name: "studio_music",
+    defaults: { title: "", tracks: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      {
+        key: "tracks",
+        type: "list",
+        labelKey: "tpl.tracks",
+        defaults: { file: null, title: "" },
+        item: [
+          { key: "file", type: "audio", labelKey: "field.file" },
+          { key: "title", type: "text", labelKey: "field.title" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "chapter_select",
+    labelKey: "tpl.chapter_select",
+    hintKey: "tpl.chapter_select.hint",
+    name: "studio_chapters",
+    defaults: { title: "", chapters: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      {
+        key: "chapters",
+        type: "list",
+        labelKey: "tpl.chapters",
+        defaults: { title: "", target: "" },
+        item: [
+          { key: "title", type: "text", labelKey: "field.title" },
+          { key: "target", type: "text", labelKey: "field.target" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "notification",
+    labelKey: "tpl.notification",
+    hintKey: "tpl.notification.hint",
+    name: "studio_notification",
+    defaults: { seconds: 3, position: "top-right" },
+    fields: [
+      { key: "seconds", type: "number", labelKey: "field.seconds" },
+      {
+        key: "position",
+        type: "select",
+        labelKey: "tpl.position",
+        options: [
+          { value: "top-right", labelKey: "tpl.pos.top_right" },
+          { value: "top-left", labelKey: "tpl.pos.top_left" },
+          { value: "bottom-right", labelKey: "tpl.pos.bottom_right" },
+          { value: "bottom-left", labelKey: "tpl.pos.bottom_left" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "hud",
+    labelKey: "tpl.hud",
+    hintKey: "tpl.hud.hint",
+    name: "studio_hud",
+    defaults: { title: "", variable: "", label: "" },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      { key: "variable", type: "text", labelKey: "field.variable" },
+      { key: "label", type: "text", labelKey: "tpl.label" },
+    ],
+  },
+  {
+    id: "confirm",
+    labelKey: "tpl.confirm",
+    hintKey: "tpl.confirm.hint",
+    name: "studio_confirm",
+    defaults: { yes: "Да", no: "Нет" },
+    fields: [
+      { key: "yes", type: "text", labelKey: "tpl.yes" },
+      { key: "no", type: "text", labelKey: "tpl.no" },
+    ],
+  },
+  {
+    id: "stats",
+    labelKey: "tpl.stats",
+    hintKey: "tpl.stats.hint",
+    name: "studio_stats",
+    defaults: { title: "", stats: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      {
+        key: "stats",
+        type: "list",
+        labelKey: "tpl.stats.items",
+        defaults: { label: "", variable: "" },
+        item: [
+          { key: "label", type: "text", labelKey: "tpl.label" },
+          { key: "variable", type: "text", labelKey: "field.variable" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "journal",
+    labelKey: "tpl.journal",
+    hintKey: "tpl.journal.hint",
+    name: "studio_journal",
+    defaults: { title: "", entries: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      {
+        key: "entries",
+        type: "list",
+        labelKey: "tpl.entries",
+        defaults: { title: "", text: "" },
+        item: [
+          { key: "title", type: "text", labelKey: "field.title" },
+          { key: "text", type: "text", labelKey: "field.text" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "inventory",
+    labelKey: "tpl.inventory",
+    hintKey: "tpl.inventory.hint",
+    name: "studio_inventory",
+    defaults: { title: "", columns: 4, items: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      { key: "columns", type: "number", labelKey: "gui.cols" },
+      {
+        key: "items",
+        type: "list",
+        labelKey: "tpl.items",
+        defaults: { image: null, title: "" },
+        item: [
+          { key: "image", type: "image", labelKey: "field.asset" },
+          { key: "title", type: "text", labelKey: "field.title" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "phone",
+    labelKey: "tpl.phone",
+    hintKey: "tpl.phone.hint",
+    name: "studio_phone",
+    defaults: { title: "", messages: [] },
+    fields: [
+      { key: "title", type: "text", labelKey: "field.title" },
+      {
+        key: "messages",
+        type: "list",
+        labelKey: "tpl.messages",
+        defaults: { who: "", text: "" },
+        item: [
+          { key: "who", type: "text", labelKey: "tpl.who" },
+          { key: "text", type: "text", labelKey: "field.text" },
+        ],
+      },
+    ],
+  },
+];
+
+function templateScreen(template: ScreenTemplate, index: number): ScreenDef {
+  return {
+    id: newId(),
+    name: `${template.name}_${index}`,
+    template: template.id,
+    title: { ru: template.name },
+    elements: [],
+    params: { ...template.defaults },
+    background: null,
+    backgroundColor: "#0b0a12",
+    modal: true,
+    tagMenu: true,
+  };
+}
 
 const defaultTheme: ThemeConfig = {
   enabled: false,
@@ -732,8 +992,11 @@ function ScreensSection({
 }) {
   const { t } = useTranslation();
   const editLocale = useStudio((s) => s.editLocale);
+  const toast = useStudio((s) => s.toast);
+  const [previewing, setPreviewing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(ui.screens[0]?.id ?? null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [templatePick, setTemplatePick] = useState("");
   const [drag, setDrag] = useState<DragState | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(760);
@@ -830,6 +1093,30 @@ function ScreensSection({
     setSelectedElementId(null);
   };
 
+  const addTemplateScreen = (id: string) => {
+    const spec = SCREEN_TEMPLATES.find((entry) => entry.id === id);
+    if (!spec) return;
+    const next = templateScreen(spec, ui.screens.length + 1);
+    next.title = { [editLocale]: t(spec.labelKey) };
+    onChange({ ...ui, screens: [...ui.screens, next] });
+    setSelectedId(next.id);
+    setSelectedElementId(null);
+  };
+
+  const previewScreen = async () => {
+    if (!screen) return;
+    setPreviewing(true);
+    try {
+      const result = await api.previewScreen(screen.name);
+      if (result.ok) toast("success", t("gui.previewStarted"));
+      else toast("error", result.message);
+    } catch (error) {
+      toast("error", String(error));
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
   const addPreset = (preset: "hub" | "about" | "hud") => {
     const next = blankScreen(`screen_${ui.screens.length + 1}`, t("gui.newScreenTitle"));
     next.name = `${preset}_${ui.screens.length + 1}`;
@@ -907,7 +1194,21 @@ function ScreensSection({
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="sm" className="mt-3 w-full" onClick={addScreen}>
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.07em] text-[var(--muted-2)]">
+          {t("tpl.pick")}
+        </div>
+        <Select
+          className="text-[11px]"
+          value={templatePick}
+          onChange={(event) => {
+            const id = event.target.value;
+            setTemplatePick("");
+            if (id) addTemplateScreen(id);
+          }}
+          options={SCREEN_TEMPLATES.map((entry) => ({ value: entry.id, label: t(entry.labelKey) }))}
+          placeholder={t("tpl.pick")}
+        />
+        <Button variant="ghost" size="sm" className="mt-2 w-full" onClick={addScreen}>
           <Plus size={13} /> {t("gui.addScreen")}
         </Button>
         <div className="mt-2 grid grid-cols-3 gap-1">
@@ -924,7 +1225,22 @@ function ScreensSection({
       </div>
 
       <div className="min-w-0 flex-1">
-        {screen ? (
+        {screen && screen.template !== "blank" ? (
+          <div className="flex h-[420px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel-2)] px-8 text-center">
+            <Sparkles size={22} className="text-[var(--accent)]" />
+            <div className="text-[14px] font-semibold">
+              {t(SCREEN_TEMPLATES.find((entry) => entry.id === screen.template)?.labelKey ?? "tpl.pick")}
+            </div>
+            <div className="mono text-[11px] text-[var(--muted-2)]">screen {screen.name}():</div>
+            <p className="max-w-[460px] text-[11px] leading-relaxed text-[var(--muted)]">
+              {t(SCREEN_TEMPLATES.find((entry) => entry.id === screen.template)?.hintKey ?? "tpl.screenHint")}
+            </p>
+            <p className="max-w-[460px] text-[11px] leading-relaxed text-[var(--muted-2)]">{t("tpl.screenHint")}</p>
+            <Button variant="primary" size="sm" disabled={previewing} onClick={() => void previewScreen()}>
+              <Play size={13} /> {t("gui.preview")}
+            </Button>
+          </div>
+        ) : screen ? (
           <>
             <div className="mb-2 flex items-center gap-1.5">
               <Button
@@ -1073,16 +1389,27 @@ function ScreensSection({
           <>
             <div className="mb-2 flex items-center justify-between">
               <span className="text-[12px] font-semibold">{t("gui.screenSettings")}</span>
-              <IconButton
-                title={t("common.delete")}
-                onClick={() => {
-                  onChange({ ...ui, screens: ui.screens.filter((entry) => entry.id !== screen.id) });
-                  setSelectedId(null);
-                  setSelectedElementId(null);
-                }}
-              >
-                <Trash2 size={14} className="text-[var(--danger)]" />
-              </IconButton>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={previewing}
+                  title={t("gui.preview")}
+                  onClick={() => void previewScreen()}
+                >
+                  <Play size={13} /> {t("gui.preview")}
+                </Button>
+                <IconButton
+                  title={t("common.delete")}
+                  onClick={() => {
+                    onChange({ ...ui, screens: ui.screens.filter((entry) => entry.id !== screen.id) });
+                    setSelectedId(null);
+                    setSelectedElementId(null);
+                  }}
+                >
+                  <Trash2 size={14} className="text-[var(--danger)]" />
+                </IconButton>
+              </div>
             </div>
             <Field label={t("gui.screenName")} hint={t("gui.screenNameHint")}>
               <Input
@@ -1099,29 +1426,38 @@ function ScreensSection({
                 }
               />
             </Field>
-            <Field label={t("gui.backgroundImage")}>
-              <AssetSelect kind="image" value={screen.background} onChange={(value) => updateScreen({ background: value })} />
-            </Field>
-            <Field label={t("gui.backgroundColor")}>
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={screen.backgroundColor || "#0b0a12"}
-                  onChange={(event) => updateScreen({ backgroundColor: event.target.value })}
-                  className="h-[32px] w-[46px] cursor-pointer rounded-md border border-[var(--border)] bg-transparent"
-                />
-                <Input
-                  className="mono text-[12px]"
-                  value={screen.backgroundColor ?? ""}
-                  onChange={(event) => updateScreen({ backgroundColor: event.target.value })}
-                />
-              </div>
-            </Field>
-            <Checkbox checked={screen.modal} label={t("gui.modal")} onChange={(value) => updateScreen({ modal: value })} />
-            <Checkbox checked={screen.tagMenu} label={t("gui.tagMenu")} onChange={(value) => updateScreen({ tagMenu: value })} />
+            {screen.template === "blank" ? (
+              <>
+                <Field label={t("gui.backgroundImage")}>
+                  <AssetSelect kind="image" value={screen.background} onChange={(value) => updateScreen({ background: value })} />
+                </Field>
+                <Field label={t("gui.backgroundColor")}>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      value={screen.backgroundColor || "#0b0a12"}
+                      onChange={(event) => updateScreen({ backgroundColor: event.target.value })}
+                      className="h-[32px] w-[46px] cursor-pointer rounded-md border border-[var(--border)] bg-transparent"
+                    />
+                    <Input
+                      className="mono text-[12px]"
+                      value={screen.backgroundColor ?? ""}
+                      onChange={(event) => updateScreen({ backgroundColor: event.target.value })}
+                    />
+                  </div>
+                </Field>
+                <Checkbox checked={screen.modal} label={t("gui.modal")} onChange={(value) => updateScreen({ modal: value })} />
+                <Checkbox checked={screen.tagMenu} label={t("gui.tagMenu")} onChange={(value) => updateScreen({ tagMenu: value })} />
+              </>
+            ) : (
+              <TemplateFields
+                screen={screen}
+                onChange={(params) => updateScreen({ params })}
+              />
+            )}
 
             <div className="mt-3 border-t border-[var(--border)] pt-3">
-              {element ? (
+              {screen.template !== "blank" ? null : element ? (
                 <>
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-[12px] font-semibold">
@@ -1183,6 +1519,43 @@ function ScreensSection({
                       ) : null}
                     </>
                   ) : null}
+                  {element.kind === "button" ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-x-3">
+                        <Field label={t("gui.idleImage")}>
+                          <AssetSelect
+                            kind="image"
+                            value={element.idleImage ?? null}
+                            onChange={(value) => updateElement({ idleImage: value })}
+                          />
+                        </Field>
+                        <Field label={t("gui.hoverImage")}>
+                          <AssetSelect
+                            kind="image"
+                            value={element.hoverImage ?? null}
+                            onChange={(value) => updateElement({ hoverImage: value })}
+                          />
+                        </Field>
+                      </div>
+                      <Field label={t("gui.buttonBackground")}>
+                        <AssetSelect
+                          kind="image"
+                          value={element.backgroundImage ?? null}
+                          onChange={(value) => updateElement({ backgroundImage: value })}
+                        />
+                      </Field>
+                      <Field label={t("gui.backgroundBorder")} hint={t("gui.backgroundBorderHint")}>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={String(element.backgroundBorder ?? 0)}
+                          onChange={(event) =>
+                            updateElement({ backgroundBorder: Number(event.target.value) || 0 })
+                          }
+                        />
+                      </Field>
+                    </>
+                  ) : null}
                   <div className="grid grid-cols-2 gap-x-3">
                     <Field label={t("gui.fontSize")}>
                       <Input
@@ -1232,6 +1605,111 @@ function ScreensSection({
           <p className="text-[11px] leading-relaxed text-[var(--muted-2)]">{t("gui.noScreens")}</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function TemplateFields({
+  screen,
+  onChange,
+}: {
+  screen: ScreenDef;
+  onChange: (params: Record<string, unknown>) => void;
+}) {
+  const { t } = useTranslation();
+  const spec = SCREEN_TEMPLATES.find((entry) => entry.id === screen.template);
+  if (!spec) return null;
+  const params = (screen.params ?? {}) as Record<string, unknown>;
+  const patch = (key: string, value: unknown) => onChange({ ...params, [key]: value });
+
+  return (
+    <div className="mt-2">
+      <div className="label">{t("tpl.params")}</div>
+      {spec.fields.map((field) => {
+        if (field.type === "list") {
+          const rows = Array.isArray(params[field.key])
+            ? (params[field.key] as Record<string, unknown>[])
+            : [];
+          return (
+            <Field key={field.key} label={t(field.labelKey)}>
+              <div className="space-y-2">
+                {rows.map((row, index) => (
+                  <div key={index} className="card p-2">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="mono text-[10px] text-[var(--muted-2)]">{index + 1}</span>
+                      <IconButton
+                        title={t("common.delete")}
+                        onClick={() => patch(field.key, rows.filter((_, i) => i !== index))}
+                      >
+                        <Trash2 size={12} />
+                      </IconButton>
+                    </div>
+                    <div className="space-y-1.5">
+                      {field.item.map((item) =>
+                        item.type === "image" || item.type === "audio" ? (
+                          <AssetSelect
+                            key={item.key}
+                            kind={item.type}
+                            value={(row[item.key] as string | null | undefined) ?? null}
+                            onChange={(value) =>
+                              patch(field.key, rows.map((entry, i) => (i === index ? { ...entry, [item.key]: value } : entry)))
+                            }
+                          />
+                        ) : (
+                          <Input
+                            key={item.key}
+                            className="h-[28px]"
+                            value={String(row[item.key] ?? "")}
+                            placeholder={t(item.labelKey)}
+                            onChange={(event) =>
+                              patch(field.key, rows.map((entry, i) => (i === index ? { ...entry, [item.key]: event.target.value } : entry)))
+                            }
+                          />
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <Button variant="ghost" size="sm" onClick={() => patch(field.key, [...rows, { ...field.defaults }])}>
+                  <Plus size={13} /> {t("common.add")}
+                </Button>
+              </div>
+            </Field>
+          );
+        }
+        if (field.type === "checkbox") {
+          return (
+            <Checkbox
+              key={field.key}
+              checked={Boolean(params[field.key])}
+              label={t(field.labelKey)}
+              onChange={(value) => patch(field.key, value)}
+            />
+          );
+        }
+        if (field.type === "select") {
+          return (
+            <Field key={field.key} label={t(field.labelKey)}>
+              <Select
+                value={String(params[field.key] ?? "")}
+                onChange={(event) => patch(field.key, event.target.value)}
+                options={field.options.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
+              />
+            </Field>
+          );
+        }
+        return (
+          <Field key={field.key} label={t(field.labelKey)}>
+            <Input
+              type={field.type === "number" ? "number" : "text"}
+              value={String(params[field.key] ?? "")}
+              onChange={(event) =>
+                patch(field.key, field.type === "number" ? Number(event.target.value) || 0 : event.target.value)
+              }
+            />
+          </Field>
+        );
+      })}
     </div>
   );
 }

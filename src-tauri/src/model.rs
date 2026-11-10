@@ -795,6 +795,9 @@ pub struct ScreenDef {
     pub template: String,
     pub title: LocalizedText,
     pub elements: Vec<ScreenElement>,
+    /// Template parameters (see `ui_templates.rs`).
+    #[serde(default)]
+    pub params: Value,
     /// Optional full-screen background image (`images/…`).
     pub background: Option<String>,
     /// Solid colour drawn under the background image.
@@ -813,6 +816,13 @@ pub struct ScreenElement {
     pub kind: String,
     pub text: LocalizedText,
     pub image: Option<String>,
+    /// Image-based button: idle/hover states (`imagebutton`).
+    pub idle_image: Option<String>,
+    pub hover_image: Option<String>,
+    /// Background image of a text button; `background_border` > 0 makes it a
+    /// 9-slice `Frame` (corners stay crisp when the button is resized).
+    pub background_image: Option<String>,
+    pub background_border: u32,
     /// jump | return | start | load | save | preferences | about | quit | show | hide | none
     pub action: Option<String>,
     /// Scene id, label or screen name, depending on the action.

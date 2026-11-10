@@ -810,6 +810,24 @@ init python:
                 warnings.push(format!("Экран {name} объявлен дважды — оставлен первый."));
                 continue;
             }
+            if screen.template != "blank" {
+                let theme = &project.ui.theme;
+                let ctx = crate::ui_templates::Ctx {
+                    width: theme.width.max(320),
+                    locales: &project.locales,
+                    accent: theme.accent_color.clone(),
+                    text: theme.text_color.clone(),
+                    muted: theme.muted_color.clone(),
+                    background: "#0b0a12".into(),
+                };
+                if let Some(lines) = crate::ui_templates::render(screen, &ctx) {
+                    // The renderer emits the whole screen (header included).
+                    file.push_str(&lines.join("\n"));
+                    file.push('\n');
+                    file.push('\n');
+                    continue;
+                }
+            }
             let _ = writeln!(file, "screen {name}():");
             if screen.modal {
                 file.push_str("    modal True\n");
@@ -881,6 +899,37 @@ init python:
                             label.to_string()
                         };
                         let action = screen_action(el, &labels);
+                        let idle = el
+                            .idle_image
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|image| !image.is_empty());
+                        if let Some(idle) = idle {
+                            let mut line = format!(
+                                "    imagebutton idle {} action {} xpos {:.3} ypos {:.3}",
+                                rpy_string(idle),
+                                action,
+                                el.x,
+                                el.y
+                            );
+                            if let Some(hover) = el
+                                .hover_image
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|image| !image.is_empty())
+                            {
+                                line.push_str(&format!(" hover {}", rpy_string(hover)));
+                            }
+                            if el.w > 0.0 && el.h > 0.0 {
+                                line.push_str(&format!(
+                                    " xysize ({}, {})",
+                                    (el.w * project.ui.theme.width.max(320) as f32) as i32,
+                                    (el.h * project.ui.theme.height.max(240) as f32) as i32
+                                ));
+                            }
+                            let _ = writeln!(file, "{line}");
+                            continue;
+                        }
                         let mut line = format!(
                             "    textbutton {} action {} xpos {:.3} ypos {:.3}",
                             rpy_text(&label, false),
@@ -894,6 +943,23 @@ init python:
                                 (el.w * project.ui.theme.width.max(320) as f32) as i32,
                                 (el.h * project.ui.theme.height.max(240) as f32) as i32
                             ));
+                        }
+                        if let Some(background) = el
+                            .background_image
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|image| !image.is_empty())
+                        {
+                            if el.background_border > 0 {
+                                line.push_str(&format!(
+                                    " background Frame({}, {}, {})",
+                                    rpy_string(background),
+                                    el.background_border,
+                                    el.background_border
+                                ));
+                            } else {
+                                line.push_str(&format!(" background {}", rpy_string(background)));
+                            }
                         }
                         let size = if el.font_size == 0 { 30 } else { el.font_size };
                         line.push_str(&format!(" text_size {}", scale_theme(project, size as f32)));
@@ -2255,6 +2321,7 @@ mod tests {
             name: "choose_person".into(),
             template: "blank".into(),
             title: [("ru".to_string(), "Кто это?".to_string())].into_iter().collect(),
+            params: serde_json::json!({}),
             background: Some("images/bg/persons.png".into()),
             background_color: "#101018".into(),
             modal: true,
@@ -2308,6 +2375,152 @@ mod tests {
         assert!(screens.content.contains("textbutton \"Мира\" action Jump(\"scene_door\")"));
         assert!(screens.content.contains("action Return()"));
         assert!(screens.content.contains("xysize ("));
+    }
+
+    #[test]
+    fn screen_templates_generate_logic() {
+        let mut project = sample_project();
+        let mut add = |name: &str, template: &str, params: serde_json::Value| {
+            project.ui.screens.push(ScreenDef {
+                id: format!("scr_{name}"),
+                name: name.into(),
+                template: template.into(),
+                title: Default::default(),
+                elements: vec![],
+                params,
+                background: None,
+                background_color: "#0b0a12".into(),
+                modal: true,
+                tag_menu: true,
+            });
+        };
+        add(
+            "save_menu",
+            "save_load",
+            json!({ "mode": "save", "columns": 3, "rows": 2, "thumbnails": true, "deleteKey": true }),
+        );
+        add("load_menu", "save_load", json!({ "mode": "load" }));
+        add(
+            "prefs",
+            "preferences",
+            json!({ "title": "Настройки", "showLanguage": true }),
+        );
+        add(
+            "gallery",
+            "gallery",
+            json!({ "columns": 4, "items": [{ "image": "images/bg/room.png", "title": "Комната" }] }),
+        );
+        add(
+            "music",
+            "music_room",
+            json!({ "tracks": [{ "file": "audio/theme.opus", "title": "Тема" }] }),
+        );
+        add(
+            "chapters",
+            "chapter_select",
+            json!({ "chapters": [{ "title": "Пролог", "target": "sc_a" }] }),
+        );
+        add("notify", "notification", json!({ "seconds": 2.5, "position": "bottom-right" }));
+        add("hud", "hud", json!({ "title": "Глава 1", "variable": "trust", "label": "Доверие" }));
+        add("confirm", "confirm", json!({ "yes": "Да", "no": "Нет" }));
+        add(
+            "stats",
+            "stats",
+            json!({ "stats": [{ "label": "Доверие", "variable": "trust" }] }),
+        );
+        add(
+            "journal",
+            "journal",
+            json!({ "entries": [{ "title": "День 1", "text": "Всё началось" }] }),
+        );
+        add(
+            "inventory",
+            "inventory",
+            json!({ "columns": 3, "items": [{ "image": "images/bg/room.png", "title": "Ключ" }] }),
+        );
+        add(
+            "phone",
+            "phone",
+            json!({ "messages": [{ "who": "Мира", "text": "Привет" }] }),
+        );
+
+        let bundle = generate(&project, &GenOptions::default());
+        let screens = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/screens_builder.rpy")
+            .expect("screens file");
+        let text = &screens.content;
+        assert!(text.contains("screen save_menu():"));
+        assert!(text.contains("action FileSave(_slot, confirm=True)"));
+        assert!(text.contains("FilePageNext()"));
+        assert!(text.contains("action FileLoad(_slot)"));
+        assert!(text.contains("Preference(\"text speed\")"));
+        assert!(text.contains("action Language(\"ru\")"));
+        assert!(text.contains("persistent.studio_gallery_unlocked"));
+        assert!(text.contains("screen gallery_view(path, title):"));
+        assert!(text.contains("Play(\"music\", _file)"));
+        assert!(text.contains("action Start(\"sc_a\")"));
+        assert!(text.contains("timer 2.5 action Hide(\"notify\")"));
+        assert!(text.contains("studio_notify_notify"));
+        assert!(text.contains("Доверие: [trust]"));
+        assert!(text.contains("screen confirm(message, yes_action, no_action):"));
+        assert!(text.contains("Всё началось"));
+        assert!(text.contains("for _image, _title in studio_inventory_items:"));
+        assert!(text.contains("Привет"));
+    }
+
+    #[test]
+    fn image_buttons_and_nine_slice_backgrounds() {
+        let mut project = sample_project();
+        project.ui.theme.enabled = true;
+        project.ui.theme.width = 1920;
+        project.ui.screens.push(ScreenDef {
+            id: "scr_btn".into(),
+            name: "image_menu".into(),
+            template: "blank".into(),
+            title: Default::default(),
+            params: serde_json::json!({}),
+            elements: vec![
+                ScreenElement {
+                    id: "el_1".into(),
+                    kind: "button".into(),
+                    text: [("ru".to_string(), "Играть".to_string())].into_iter().collect(),
+                    idle_image: Some("gui/button/idle.png".into()),
+                    hover_image: Some("gui/button/hover.png".into()),
+                    action: Some("start".into()),
+                    x: 0.1,
+                    y: 0.5,
+                    w: 0.2,
+                    h: 0.08,
+                    ..ScreenElement::default()
+                },
+                ScreenElement {
+                    id: "el_2".into(),
+                    kind: "button".into(),
+                    text: [("ru".to_string(), "Назад".to_string())].into_iter().collect(),
+                    background_image: Some("gui/button/choice_idle_background.png".into()),
+                    background_border: 12,
+                    action: Some("return".into()),
+                    ..ScreenElement::default()
+                },
+            ],
+            background: None,
+            background_color: "#0b0a12".into(),
+            modal: true,
+            tag_menu: true,
+        });
+        let bundle = generate(&project, &GenOptions::default());
+        let screens = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/screens_builder.rpy")
+            .expect("screens file");
+        assert!(screens.content.contains("imagebutton idle \"gui/button/idle.png\" action Start()"));
+        assert!(screens.content.contains("hover \"gui/button/hover.png\""));
+        assert!(screens
+            .content
+            .contains("background Frame(\"gui/button/choice_idle_background.png\", 12, 12)"));
     }
 
     #[test]

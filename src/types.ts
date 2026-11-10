@@ -84,6 +84,10 @@ export interface ScreenElement {
   kind: "text" | "button" | "image";
   text: LocalizedText;
   image: string | null;
+  idleImage?: string | null;
+  hoverImage?: string | null;
+  backgroundImage?: string | null;
+  backgroundBorder?: number;
   action: string | null;
   target: string | null;
   x: number;
@@ -102,6 +106,7 @@ export interface ScreenDef {
   template: string;
   title: LocalizedText;
   elements: ScreenElement[];
+  params?: Record<string, unknown>;
   background: string | null;
   backgroundColor: string;
   modal: boolean;

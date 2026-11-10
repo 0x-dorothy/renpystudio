@@ -176,6 +176,7 @@ pub fn run() {
             commands::project_lint,
             commands::project_run,
             commands::project_stop,
+            commands::project_preview_screen,
             commands::project_build,
             commands::project_build_start,
             commands::project_build_status,

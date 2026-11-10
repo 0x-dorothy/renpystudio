@@ -25,6 +25,34 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Temporary harness that shows a single screen instead of the main menu.
+const PREVIEW_FILE: &str = "game/zz_studio_preview.rpy";
+
+fn cleanup_preview(root: &Path) {
+    let _ = std::fs::remove_file(root.join(PREVIEW_FILE));
+}
+
+fn preview_harness(screen: &str) -> String {
+    format!(
+        "# Временный файл предпросмотра RenPy Studio.\n\
+# Удаляется при запуске, остановке, экспорте и сборке.\n\
+\nscreen _studio_preview_backdrop():\n\
+    zorder -1000\n\
+    add Solid(\"#141420\")\n\
+    key \"game_menu\" action Quit(confirm=False)\n\
+    text \"Предпросмотр экрана · Esc — выход\" xalign 0.5 yalign 0.985 size 16 color \"#6a6a80\"\n\
+\nlabel main_menu:\n\
+    if not renpy.has_screen({name}):\n\
+        \"Экран {name} не найден.\"\n\
+        return\n\
+    show screen _studio_preview_backdrop\n\
+    $ renpy.show_screen({name})\n\
+    while True:\n\
+        pause 0.1 hard\n",
+        name = rpy_string(screen)
+    )
+}
+
 pub struct AppState {
     pub store: Mutex<Store>,
     pub settings: Mutex<Settings>,
@@ -277,6 +305,8 @@ fn regenerate(state: &AppState, force: bool) -> Result<ExportReport, String> {
         locale: if locale.is_empty() { "ru".into() } else { locale },
         force,
     };
+    // Any real export invalidates the temporary preview harness.
+    cleanup_preview(&root);
     crate::watcher::suppress_for(2500);
     let (mut report, _, _) = exporter::export(&project, &root, &opts)?;
     crate::sdk::write_project_settings(
@@ -1145,6 +1175,7 @@ pub fn project_run(state: State<'_, Shared>) -> Result<RunResult, String> {
         .sdk_info()
         .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
     let root = state.root().ok_or("Проект не открыт")?;
+    cleanup_preview(&root);
     {
         let mut store = lock_store(&state)?;
         if store.dirty {
@@ -1179,7 +1210,59 @@ pub fn project_run(state: State<'_, Shared>) -> Result<RunResult, String> {
 
 #[tauri::command]
 pub fn project_stop(state: State<'_, Shared>) -> Result<bool, String> {
+    if let Some(root) = state.root() {
+        cleanup_preview(&root);
+    }
     Ok(state.sdk.stop_game())
+}
+
+/// Starts the game with a temporary `main_menu` override that shows one screen.
+#[tauri::command]
+pub fn project_preview_screen(
+    state: State<'_, Shared>,
+    screen: String,
+) -> Result<RunResult, String> {
+    let sdk = state
+        .sdk_info()
+        .ok_or("Ren'Py SDK не найден. Укажите путь к SDK в настройках.")?;
+    let root = state.root().ok_or("Проект не открыт")?;
+    let name = screen.trim();
+    if name.is_empty() {
+        return Err("Экран не выбран".into());
+    }
+    {
+        let mut store = lock_store(&state)?;
+        if store.dirty {
+            store.save()?;
+        }
+    }
+    let report = regenerate(&state, false)?;
+    if !report.conflicts.is_empty() {
+        return Ok(RunResult {
+            ok: false,
+            message: "Предпросмотр отменён: есть конфликты с файлами, изменёнными вне студии."
+                .into(),
+            pid: None,
+        });
+    }
+    crate::watcher::suppress_for(2500);
+    crate::store::write_atomic(&root.join(PREVIEW_FILE), preview_harness(name).as_bytes())?;
+    state.sdk.stop_game();
+    match state.sdk.run_game(&sdk, &root) {
+        Ok(pid) => Ok(RunResult {
+            ok: true,
+            message: "Предпросмотр запущен".into(),
+            pid: Some(pid),
+        }),
+        Err(e) => {
+            cleanup_preview(&root);
+            Ok(RunResult {
+                ok: false,
+                message: e,
+                pid: None,
+            })
+        }
+    }
 }
 
 #[tauri::command]

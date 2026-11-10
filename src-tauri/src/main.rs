@@ -17,6 +17,7 @@ mod secret;
 mod settings;
 mod store;
 mod templates;
+mod ui_templates;
 mod util;
 mod validation;
 mod watcher;

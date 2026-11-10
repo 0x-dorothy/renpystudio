@@ -11,7 +11,10 @@
     "createdAt": "2026-11-09T18:00:00Z",
     "updatedAt": "2026-11-09T18:00:00Z"
   },
-  "locales": ["ru", "en"],
+  "locales": [
+    "ru",
+    "en"
+  ],
   "characters": [
     {
       "id": "ch_mira",
@@ -81,21 +84,186 @@
       "summary": "Знакомство",
       "color": "#8b6cf2",
       "nodes": [
-        { "id": "n_scene", "kind": "scene", "params": { "bg": "images/bg/room.png", "transition": "dissolve", "duration": null }, "source": "studio", "locked": false },
-        { "id": "n_comment", "kind": "comment", "params": { "text": { "ru": "Здесь начинается история", "en": "The story begins here" }, "internalOnly": false }, "source": "studio", "locked": false },
-        { "id": "n_narr", "kind": "narrate", "params": { "text": { "ru": "Комната пахла старыми книгами.", "en": "The room smelled of old books." } }, "source": "studio", "locked": false },
-        { "id": "n_show", "kind": "show", "params": { "who": "ch_mira", "image": "happy", "asset": "images/sprites/mira_happy.png", "position": "left", "customX": null, "transition": "dissolve", "flip": false }, "source": "studio", "locked": false },
-        { "id": "n_say1", "kind": "say", "params": { "who": "ch_mira", "text": { "ru": "Это начало…", "en": "This is the beginning…" }, "image": "happy", "voice": "audio/voice/mira_001.opus", "cps": 40 }, "source": "studio", "locked": false },
-        { "id": "n_thought", "kind": "say", "params": { "who": "ch_thought", "text": { "ru": "Она волнуется.", "en": "She is nervous." }, "image": null, "voice": null, "cps": null }, "source": "studio", "locked": false },
-        { "id": "n_pose", "kind": "pose", "params": { "who": "ch_mira", "image": "sad", "asset": "images/sprites/mira_sad.png", "transition": "dissolve" }, "source": "studio", "locked": false },
-        { "id": "n_anim", "kind": "anim", "params": { "who": "ch_mira", "preset": "shake" }, "source": "studio", "locked": false },
-        { "id": "n_music", "kind": "music", "params": { "action": "play", "file": "audio/theme.opus", "fadeout": 1.0, "loop": true, "channel": null }, "source": "studio", "locked": false },
-        { "id": "n_set", "kind": "set", "params": { "variable": "trust", "op": "add", "value": 1 }, "source": "studio", "locked": false },
-        { "id": "n_pause", "kind": "pause", "params": { "seconds": 0.5, "hard": false }, "source": "studio", "locked": false },
-        { "id": "n_menu", "kind": "menu", "params": { "prompt": { "ru": "Открыть дверь?", "en": "Open the door?" }, "withCaption": true, "options": [
-          { "id": "o1", "text": { "ru": "Открыть дверь", "en": "Open the door" }, "condition": null, "target": "sc_door", "setVars": [{ "variable": "trust", "op": "add", "value": 1 }] },
-          { "id": "o2", "text": { "ru": "Уйти", "en": "Leave" }, "condition": "trust > 0", "target": "sc_street", "setVars": [] }
-        ] }, "source": "studio", "locked": false }
+        {
+          "id": "n_scene",
+          "kind": "scene",
+          "params": {
+            "bg": "images/bg/room.png",
+            "transition": "dissolve",
+            "duration": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_comment",
+          "kind": "comment",
+          "params": {
+            "text": {
+              "ru": "Здесь начинается история",
+              "en": "The story begins here"
+            },
+            "internalOnly": false
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_narr",
+          "kind": "narrate",
+          "params": {
+            "text": {
+              "ru": "Комната пахла старыми книгами.",
+              "en": "The room smelled of old books."
+            }
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_show",
+          "kind": "show",
+          "params": {
+            "who": "ch_mira",
+            "image": "happy",
+            "asset": "images/sprites/mira_happy.png",
+            "position": "left",
+            "customX": null,
+            "transition": "dissolve",
+            "flip": false
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_say1",
+          "kind": "say",
+          "params": {
+            "who": "ch_mira",
+            "text": {
+              "ru": "Это начало…",
+              "en": "This is the beginning…"
+            },
+            "image": "happy",
+            "voice": "audio/voice/mira_001.opus",
+            "cps": 40
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_thought",
+          "kind": "say",
+          "params": {
+            "who": "ch_thought",
+            "text": {
+              "ru": "Она волнуется.",
+              "en": "She is nervous."
+            },
+            "image": null,
+            "voice": null,
+            "cps": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_pose",
+          "kind": "pose",
+          "params": {
+            "who": "ch_mira",
+            "image": "sad",
+            "asset": "images/sprites/mira_sad.png",
+            "transition": "dissolve"
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_anim",
+          "kind": "anim",
+          "params": {
+            "who": "ch_mira",
+            "preset": "shake"
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_music",
+          "kind": "music",
+          "params": {
+            "action": "play",
+            "file": "audio/theme.opus",
+            "fadeout": 1.0,
+            "loop": true,
+            "channel": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_set",
+          "kind": "set",
+          "params": {
+            "variable": "trust",
+            "op": "add",
+            "value": 1
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_pause",
+          "kind": "pause",
+          "params": {
+            "seconds": 0.5,
+            "hard": false
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_menu",
+          "kind": "menu",
+          "params": {
+            "prompt": {
+              "ru": "Открыть дверь?",
+              "en": "Open the door?"
+            },
+            "withCaption": true,
+            "options": [
+              {
+                "id": "o1",
+                "text": {
+                  "ru": "Открыть дверь",
+                  "en": "Open the door"
+                },
+                "condition": null,
+                "target": "sc_door",
+                "setVars": [
+                  {
+                    "variable": "trust",
+                    "op": "add",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "id": "o2",
+                "text": {
+                  "ru": "Уйти",
+                  "en": "Leave"
+                },
+                "condition": "trust > 0",
+                "target": "sc_street",
+                "setVars": []
+              }
+            ]
+          },
+          "source": "studio",
+          "locked": false
+        }
       ]
     },
     {
@@ -105,9 +273,49 @@
       "summary": "",
       "color": null,
       "nodes": [
-        { "id": "n_door_say", "kind": "say", "params": { "who": "ch_mira", "text": { "ru": "Тут ключ!", "en": "A key!" }, "image": null, "voice": null, "cps": null }, "source": "studio", "locked": false },
-        { "id": "n_door_set", "kind": "set", "params": { "variable": "saw_key", "op": "set", "value": true }, "source": "studio", "locked": false },
-        { "id": "n_door_if", "kind": "if", "params": { "mode": "builder", "variable": "trust", "op": "gte", "value": 2, "expression": "", "thenTarget": "sc_ending", "elseTarget": "sc_street", "hasElse": true }, "source": "studio", "locked": false }
+        {
+          "id": "n_door_say",
+          "kind": "say",
+          "params": {
+            "who": "ch_mira",
+            "text": {
+              "ru": "Тут ключ!",
+              "en": "A key!"
+            },
+            "image": null,
+            "voice": null,
+            "cps": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_door_set",
+          "kind": "set",
+          "params": {
+            "variable": "saw_key",
+            "op": "set",
+            "value": true
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_door_if",
+          "kind": "if",
+          "params": {
+            "mode": "builder",
+            "variable": "trust",
+            "op": "gte",
+            "value": 2,
+            "expression": "",
+            "thenTarget": "sc_ending",
+            "elseTarget": "sc_street",
+            "hasElse": true
+          },
+          "source": "studio",
+          "locked": false
+        }
       ]
     },
     {
@@ -117,13 +325,137 @@
       "summary": "",
       "color": null,
       "nodes": [
-        { "id": "n_street_bg", "kind": "scene", "params": { "bg": "images/bg/street.png", "transition": "fade", "duration": 0.8 }, "source": "studio", "locked": false },
-        { "id": "nd_pc_1", "kind": "pointclick", "params": { "hoverSound": "audio/theme.opus", "clickSound": "audio/theme.opus", "bg": "images/bg/room.png", "prompt": { "ru": "Куда пойти?", "en": "Where to?" }, "hotspots": [ { "id": "hs_door", "label": { "ru": "Дверь", "en": "Door" }, "shape": "rect", "x": 0.62, "y": 0.26, "w": 0.22, "h": 0.46, "points": [], "action": "jump", "target": "sc_ending" }, { "id": "hs_window", "label": { "ru": "Окно", "en": "Window" }, "shape": "polygon", "x": 0.1, "y": 0.18, "w": 0.3, "h": 0.34, "points": [[0.12, 0.22], [0.38, 0.18], [0.4, 0.46], [0.14, 0.5]], "action": "tooltip", "target": null } ] }, "source": "studio", "locked": false },
-        { "id": "n_street_hide", "kind": "hide", "params": { "who": "ch_mira", "image": null, "transition": "dissolve" }, "source": "studio", "locked": false },
-        { "id": "n_street_code", "kind": "code", "params": { "code": "$ renpy.notify(\"Глава 1 завершена\")", "language": "renpy" }, "source": "studio", "locked": false },
-        { "id": "n_street_label", "kind": "label", "params": { "name": "street_end" }, "source": "studio", "locked": false },
-        { "id": "n_street_say", "kind": "say", "params": { "who": null, "text": { "ru": "Ветер стих.", "en": "The wind died down." }, "image": null, "voice": null, "cps": null }, "source": "studio", "locked": false },
-        { "id": "n_street_jump", "kind": "jump", "params": { "target": "sc_ending", "transition": "fade" }, "source": "studio", "locked": false }
+        {
+          "id": "n_street_bg",
+          "kind": "scene",
+          "params": {
+            "bg": "images/bg/street.png",
+            "transition": "fade",
+            "duration": 0.8
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "nd_pc_1",
+          "kind": "pointclick",
+          "params": {
+            "hoverSound": "audio/theme.opus",
+            "clickSound": "audio/theme.opus",
+            "bg": "images/bg/room.png",
+            "prompt": {
+              "ru": "Куда пойти?",
+              "en": "Where to?"
+            },
+            "hotspots": [
+              {
+                "id": "hs_door",
+                "label": {
+                  "ru": "Дверь",
+                  "en": "Door"
+                },
+                "shape": "rect",
+                "x": 0.62,
+                "y": 0.26,
+                "w": 0.22,
+                "h": 0.46,
+                "points": [],
+                "action": "jump",
+                "target": "sc_ending"
+              },
+              {
+                "id": "hs_window",
+                "label": {
+                  "ru": "Окно",
+                  "en": "Window"
+                },
+                "shape": "polygon",
+                "x": 0.1,
+                "y": 0.18,
+                "w": 0.3,
+                "h": 0.34,
+                "points": [
+                  [
+                    0.12,
+                    0.22
+                  ],
+                  [
+                    0.38,
+                    0.18
+                  ],
+                  [
+                    0.4,
+                    0.46
+                  ],
+                  [
+                    0.14,
+                    0.5
+                  ]
+                ],
+                "action": "tooltip",
+                "target": null
+              }
+            ]
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_street_hide",
+          "kind": "hide",
+          "params": {
+            "who": "ch_mira",
+            "image": null,
+            "transition": "dissolve"
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_street_code",
+          "kind": "code",
+          "params": {
+            "code": "$ renpy.notify(\"Глава 1 завершена\")",
+            "language": "renpy"
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_street_label",
+          "kind": "label",
+          "params": {
+            "name": "street_end"
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_street_say",
+          "kind": "say",
+          "params": {
+            "who": null,
+            "text": {
+              "ru": "Ветер стих.",
+              "en": "The wind died down."
+            },
+            "image": null,
+            "voice": null,
+            "cps": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_street_jump",
+          "kind": "jump",
+          "params": {
+            "target": "sc_ending",
+            "transition": "fade"
+          },
+          "source": "studio",
+          "locked": false
+        }
       ]
     },
     {
@@ -133,9 +465,42 @@
       "summary": "",
       "color": null,
       "nodes": [
-        { "id": "n_end_say", "kind": "say", "params": { "who": "ch_mira", "text": { "ru": "Конец.", "en": "The end." }, "image": "happy", "voice": null, "cps": null }, "source": "studio", "locked": false },
-        { "id": "n_end_sound", "kind": "sound", "params": { "file": "audio/click.opus", "loop": false, "volume": null }, "source": "studio", "locked": false },
-        { "id": "n_end_return", "kind": "return", "params": { "toMainMenu": true }, "source": "studio", "locked": false }
+        {
+          "id": "n_end_say",
+          "kind": "say",
+          "params": {
+            "who": "ch_mira",
+            "text": {
+              "ru": "Конец.",
+              "en": "The end."
+            },
+            "image": "happy",
+            "voice": null,
+            "cps": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_end_sound",
+          "kind": "sound",
+          "params": {
+            "file": "audio/click.opus",
+            "loop": false,
+            "volume": null
+          },
+          "source": "studio",
+          "locked": false
+        },
+        {
+          "id": "n_end_return",
+          "kind": "return",
+          "params": {
+            "toMainMenu": true
+          },
+          "source": "studio",
+          "locked": false
+        }
       ]
     }
   ],
@@ -183,8 +548,14 @@
       "template": "aurora",
       "background": "images/bg/menu.png",
       "logo": null,
-      "title": { "ru": "Тестовая новелла", "en": "Test Novel" },
-      "tagline": { "ru": "Сквозной тест", "en": "End-to-end test" },
+      "title": {
+        "ru": "Тестовая новелла",
+        "en": "Test Novel"
+      },
+      "tagline": {
+        "ru": "Сквозной тест",
+        "en": "End-to-end test"
+      },
       "music": "audio/menu.opus",
       "accent": "#8b6cf2",
       "textColor": "#f5f3ff",
@@ -267,6 +638,280 @@
         "backgroundColor": "#101018",
         "modal": true,
         "tagMenu": false
+      },
+      {
+        "id": "scr_save_menu",
+        "name": "save_menu",
+        "template": "save_load",
+        "title": {
+          "ru": "Сохранение"
+        },
+        "elements": [],
+        "params": {
+          "mode": "save",
+          "columns": 3,
+          "rows": 2,
+          "thumbnails": true,
+          "deleteKey": true
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_load_menu",
+        "name": "load_menu",
+        "template": "save_load",
+        "title": {
+          "ru": "Загрузка"
+        },
+        "elements": [],
+        "params": {
+          "mode": "load",
+          "title": "Загрузка"
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_prefs",
+        "name": "studio_prefs",
+        "template": "preferences",
+        "title": {
+          "ru": "Настройки"
+        },
+        "elements": [],
+        "params": {
+          "title": "Настройки",
+          "showLanguage": true
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_gallery",
+        "name": "studio_gallery",
+        "template": "gallery",
+        "title": {
+          "ru": "Галерея"
+        },
+        "elements": [],
+        "params": {
+          "title": "Галерея",
+          "columns": 3,
+          "items": [
+            {
+              "image": "images/bg/room.png",
+              "title": "Комната"
+            },
+            {
+              "image": "images/bg/street.png",
+              "title": "Улица"
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_music",
+        "name": "studio_music",
+        "template": "music_room",
+        "title": {
+          "ru": "Музыка"
+        },
+        "elements": [],
+        "params": {
+          "title": "Музыка",
+          "tracks": [
+            {
+              "file": "audio/theme.opus",
+              "title": "Тема"
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_chapters",
+        "name": "studio_chapters",
+        "template": "chapter_select",
+        "title": {
+          "ru": "Главы"
+        },
+        "elements": [],
+        "params": {
+          "title": "Главы",
+          "chapters": [
+            {
+              "title": "Пролог",
+              "target": "sc_prologue"
+            },
+            {
+              "title": "Дверь",
+              "target": "sc_door"
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_notify",
+        "name": "studio_notify",
+        "template": "notification",
+        "title": {
+          "ru": "Уведомление"
+        },
+        "elements": [],
+        "params": {
+          "seconds": 2.5,
+          "position": "bottom-right"
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_hud",
+        "name": "studio_hud",
+        "template": "hud",
+        "title": {
+          "ru": "HUD"
+        },
+        "elements": [],
+        "params": {
+          "title": "Глава 1",
+          "variable": "trust",
+          "label": "Доверие"
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_confirm",
+        "name": "studio_confirm",
+        "template": "confirm",
+        "title": {
+          "ru": "Подтверждение"
+        },
+        "elements": [],
+        "params": {
+          "yes": "Да",
+          "no": "Нет"
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_stats",
+        "name": "studio_stats",
+        "template": "stats",
+        "title": {
+          "ru": "Статистика"
+        },
+        "elements": [],
+        "params": {
+          "title": "Статистика",
+          "stats": [
+            {
+              "label": "Доверие",
+              "variable": "trust"
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_journal",
+        "name": "studio_journal",
+        "template": "journal",
+        "title": {
+          "ru": "Дневник"
+        },
+        "elements": [],
+        "params": {
+          "title": "Дневник",
+          "entries": [
+            {
+              "title": "День 1",
+              "text": "Всё началось с письма."
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_inventory",
+        "name": "studio_inventory",
+        "template": "inventory",
+        "title": {
+          "ru": "Инвентарь"
+        },
+        "elements": [],
+        "params": {
+          "title": "Инвентарь",
+          "columns": 3,
+          "items": [
+            {
+              "image": "images/bg/room.png",
+              "title": "Ключ"
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
+      },
+      {
+        "id": "scr_studio_phone",
+        "name": "studio_phone",
+        "template": "phone",
+        "title": {
+          "ru": "Сообщения"
+        },
+        "elements": [],
+        "params": {
+          "title": "Сообщения",
+          "messages": [
+            {
+              "who": "Мира",
+              "text": "Привет!"
+            },
+            {
+              "who": "me",
+              "text": "Ты где?"
+            }
+          ]
+        },
+        "background": null,
+        "backgroundColor": "#0b0a12",
+        "modal": true,
+        "tagMenu": true
       }
     ]
   }
