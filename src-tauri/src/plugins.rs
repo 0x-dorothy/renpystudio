@@ -162,6 +162,23 @@ fn clean_target(path: &str, plugin_id: &str) -> Option<String> {
     {
         return None;
     }
+    // Plugin archives are usually a demo game wrapped around the plugin: the
+    // demo's translations and its own Ren'Py core files must never replace the
+    // host project's screens, options or story entry point.
+    if relative.starts_with("tl/") || relative.contains("/tl/") {
+        return None;
+    }
+    const SCAFFOLD: [&str; 6] = [
+        "script.rpy",
+        "options.rpy",
+        "gui.rpy",
+        "screens.rpy",
+        "common.rpy",
+        "splashscreen.rpy",
+    ];
+    if SCAFFOLD.contains(&relative.as_str()) {
+        return None;
+    }
     Some(relative)
 }
 
@@ -391,6 +408,12 @@ pub fn install(root: &Path, plugin: &PluginInfo) -> Result<Vec<String>, String> 
                     .by_name(&plan.source)
                     .map_err(|e| format!("{}: {e}", plan.source))?;
                 let target = safe_join(root, &plan.target)?;
+                if target.exists() {
+                    // Never overwrite what the author already has: plugin zips
+                    // ship a demo's gui art and core screens as well as the
+                    // plugin itself.
+                    continue;
+                }
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
@@ -403,6 +426,9 @@ pub fn install(root: &Path, plugin: &PluginInfo) -> Result<Vec<String>, String> 
             for plan in &plugin.files {
                 let source = PathBuf::from(&plan.source);
                 let target = safe_join(root, &plan.target)?;
+                if target.exists() {
+                    continue;
+                }
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
@@ -432,6 +458,14 @@ pub fn uninstall(root: &Path, files: &[String]) -> Vec<String> {
         let Ok(path) = safe_join(root, trimmed) else { continue };
         if path.is_file() && fs::remove_file(&path).is_ok() {
             removed.push(relative.clone());
+            // Ren'Py keeps loading orphaned .rpyc files, so a deleted plugin
+            // script must take its compiled twin with it.
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rpy") {
+                let compiled = path.with_extension("rpyc");
+                if compiled.is_file() {
+                    let _ = fs::remove_file(&compiled);
+                }
+            }
         }
     }
     removed

@@ -20,6 +20,7 @@ import type { ImportReport, Settings } from "../types";
 import { formatDateTime } from "../util";
 import { useDebouncedValue } from "../hooks";
 import { listen } from "@tauri-apps/api/event";
+import { HotspotModal } from "./HotspotEditor";
 
 export function StudioModals() {
   return (
@@ -32,6 +33,7 @@ export function StudioModals() {
       <DiffModal />
       <PluginDocsModal />
       <ImportModal />
+      <HotspotModal />
     </>
   );
 }
@@ -310,6 +312,7 @@ function SettingsModal() {
           <Field label={t("settings.aiKey")}>
             <Input
               type="password"
+              autoComplete="off"
               value={draft.ai.apiKey}
               onChange={(event) => setDraft({ ...draft, ai: { ...draft.ai, apiKey: event.target.value } })}
               onBlur={() => void saveSettings(draft)}

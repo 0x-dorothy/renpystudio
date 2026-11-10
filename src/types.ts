@@ -1,4 +1,4 @@
-﻿// Mirrors the Rust model (serde camelCase). Keep in sync with src-tauri/src/model.rs.
+// Mirrors the Rust model (serde camelCase). Keep in sync with src-tauri/src/model.rs.
 
 export type LocalizedText = Record<string, string>;
 
@@ -187,6 +187,42 @@ export interface AiSettings {
   model: string;
 }
 
+export interface AiModelInfo {
+  id: string;
+  ownedBy?: string | null;
+}
+
+export interface AiUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface AiReply {
+  content: string;
+  model: string;
+  finishReason: string | null;
+  usage: AiUsage | null;
+}
+
+/** One change the assistant proposes; applied only after the user confirms. */
+export interface AiAction {
+  type: "add_scene" | "add_block" | "set_start_scene" | string;
+  sceneId?: string;
+  title?: string;
+  kind?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface AiChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  actions?: AiAction[];
+  applied?: boolean;
+  error?: boolean;
+}
+
 export interface Settings {
   locale: string;
   theme: "dark" | "light";
@@ -335,6 +371,26 @@ export interface FileDiff {
   path: string;
   status: "modified" | "added" | "removed";
   lines: string[];
+}
+
+export interface PointClickParams {
+  bg: string;
+  prompt: LocalizedText;
+  hotspots: Hotspot[];
+}
+
+/** One clickable zone of a point-and-click block. Coordinates are 0..1. */
+export interface Hotspot {
+  id: string;
+  label: LocalizedText;
+  shape: "rect" | "polygon";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  points: [number, number][];
+  action: "jump" | "tooltip" | "return";
+  target: string | null;
 }
 
 export interface PluginFile {

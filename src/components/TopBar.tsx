@@ -13,6 +13,7 @@ import {
   Redo2,
   Settings,
   ShieldCheck,
+  Sparkles,
   Square,
   Undo2,
 } from "lucide-react";
@@ -39,6 +40,8 @@ export function TopBar() {
   const openProject = useStudio((s) => s.openProject);
   const closeProject = useStudio((s) => s.closeProject);
   const sdk = useStudio((s) => s.sdk);
+  const aiOpen = useStudio((s) => s.aiOpen);
+  const toggleAi = useStudio((s) => s.toggleAi);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [running, setRunning] = useState(false);
@@ -210,6 +213,9 @@ export function TopBar() {
             <div className="mx-1 h-5 w-px bg-[var(--border)]" />
             <IconButton title={t("menu.history")} onClick={() => openModal("history")}>
               <History size={16} />
+            </IconButton>
+            <IconButton title={t("ai.title")} active={aiOpen} onClick={toggleAi}>
+              <Sparkles size={16} />
             </IconButton>
             <IconButton title={t("menu.settings")} onClick={() => openModal("settings")}>
               <Settings size={16} />

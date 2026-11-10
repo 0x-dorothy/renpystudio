@@ -14,6 +14,7 @@ import { TopBar } from "./components/TopBar";
 import { StatusBar } from "./components/StatusBar";
 import { Sidebar } from "./components/Sidebar";
 import { Inspector } from "./components/Inspector";
+import { AiPanel } from "./components/AiPanel";
 import { SceneEditor } from "./components/SceneEditor";
 import { GraphView } from "./components/GraphView";
 import { CharactersTab } from "./components/CharactersTab";
@@ -218,6 +219,7 @@ export default function App() {
               </div>
             </main>
             <Inspector />
+            <AiPanel />
           </>
         ) : (
           <Welcome />

@@ -1,6 +1,6 @@
 [package]
 name = "renpy-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "Visual no-code IDE for Ren'Py visual novels"
 authors = ["RenPy Studio"]
 edition = "2021"
@@ -29,6 +29,8 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 similar = "2"
 zip = "2"
+# OpenAI-compatible assistant: the key never leaves the Rust side.
+ureq = { version = "2", features = ["json", "tls"] }
 
 [profile.release]
 codegen-units = 1

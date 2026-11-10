@@ -4,6 +4,9 @@ import { api } from "./api";
 import i18n, { setLanguage } from "./i18n";
 import { slugify } from "./util";
 import type {
+  AiAction,
+  AiChatMessage,
+  AiModelInfo,
   AssetInfo,
   Bootstrap,
   Character,
@@ -36,7 +39,8 @@ export type ModalKind =
   | "lint"
   | "conflicts"
   | "diff"
-  | "pluginDocs";
+  | "pluginDocs"
+  | "hotspots";
 
 export interface Toast {
   id: number;
@@ -75,6 +79,17 @@ interface StudioState {
   toasts: Toast[];
   mcp: { running: boolean; port?: number; url?: string };
   welcomeStep: "home" | "new" | "open";
+
+  aiOpen: boolean;
+  aiBusy: boolean;
+  aiError: string | null;
+  aiMessages: AiChatMessage[];
+  aiModels: AiModelInfo[];
+  toggleAi: () => void;
+  refreshAiModels: () => Promise<void>;
+  sendAiMessage: (text: string) => Promise<void>;
+  applyAiActions: (messageId: number) => Promise<void>;
+  clearAiChat: () => void;
 
   init: () => Promise<void>;
   applyEnvelope: (env: StateEnvelope, opts?: { reset?: boolean }) => void;
@@ -188,8 +203,45 @@ export function applyTheme(settings: Settings) {
 }
 
 let toastSeq = 1;
+let aiSeq = 1;
 const errText = (error: unknown): string =>
   typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
+
+const ALLOWED_ACTIONS = new Set(["add_scene", "add_block", "set_start_scene"]);
+
+/**
+ * The assistant may end a reply with a fenced JSON block of proposed changes.
+ * Actions are only *proposed*: they are stripped from the message body and
+ * applied after an explicit confirmation.
+ */
+function extractActions(content: string): { content: string; actions: AiAction[] } {
+  const pattern = /```json\s*([\s\S]*?)```/gi;
+  let actions: AiAction[] = [];
+  let text = content;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]) as { actions?: unknown };
+      if (!parsed || !Array.isArray(parsed.actions)) continue;
+      const valid = parsed.actions.filter((entry): entry is AiAction => {
+        if (!entry || typeof entry !== "object") return false;
+        const action = entry as Record<string, unknown>;
+        if (typeof action.type !== "string" || !ALLOWED_ACTIONS.has(action.type)) return false;
+        if (action.type === "add_block") {
+          return typeof action.sceneId === "string" && typeof action.kind === "string";
+        }
+        if (action.type === "add_scene") return typeof action.title === "string";
+        return typeof action.sceneId === "string";
+      });
+      if (!valid.length) continue;
+      actions = [...actions, ...valid];
+      text = text.replace(match[0], "");
+    } catch {
+      /* not an action block — keep it as plain text */
+    }
+  }
+  return { content: text.trim(), actions };
+}
 
 export const useStudio = create<StudioState>((set, get) => {
   const applyEnvelope = (env: StateEnvelope, opts?: { reset?: boolean }) => {
@@ -321,6 +373,11 @@ export const useStudio = create<StudioState>((set, get) => {
     toasts: [],
     mcp: { running: false },
     welcomeStep: "home",
+    aiOpen: false,
+    aiBusy: false,
+    aiError: null,
+    aiMessages: [],
+    aiModels: [],
 
     init,
     applyEnvelope,
@@ -374,6 +431,112 @@ export const useStudio = create<StudioState>((set, get) => {
     },
     dismissToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
     dismissExternal: () => set({ externalChange: null }),
+
+    toggleAi: () => {
+      const open = !get().aiOpen;
+      set({ aiOpen: open });
+      if (open && get().aiModels.length === 0) void get().refreshAiModels();
+    },
+    refreshAiModels: async () => {
+      try {
+        const models = await api.aiModels();
+        set({ aiModels: models, aiError: null });
+      } catch (error) {
+        set({ aiError: errText(error) });
+      }
+    },
+    clearAiChat: () => set({ aiMessages: [], aiError: null }),
+    sendAiMessage: async (text) => {
+      const trimmed = text.trim();
+      if (!trimmed || get().aiBusy) return;
+      const history: AiChatMessage[] = [
+        ...get().aiMessages,
+        { id: aiSeq++, role: "user", content: trimmed },
+      ];
+      set({ aiMessages: history, aiBusy: true, aiError: null });
+      try {
+        const payload = history
+          .filter((message) => !message.error)
+          .map((message) => ({ role: message.role, content: message.content }));
+        const reply = await api.aiChat(payload, get().activeSceneId);
+        const parsed = extractActions(reply.content);
+        set({
+          aiMessages: [
+            ...get().aiMessages,
+            {
+              id: aiSeq++,
+              role: "assistant",
+              content: parsed.actions.length ? parsed.content : reply.content,
+              actions: parsed.actions,
+            },
+          ],
+        });
+      } catch (error) {
+        const message = errText(error);
+        set({
+          aiError: message,
+          aiMessages: [
+            ...get().aiMessages,
+            { id: aiSeq++, role: "assistant", content: message, error: true },
+          ],
+        });
+      } finally {
+        set({ aiBusy: false });
+      }
+    },
+    applyAiActions: async (messageId) => {
+      const message = get().aiMessages.find((entry) => entry.id === messageId);
+      const actions = message?.actions ?? [];
+      if (!actions.length) return;
+      let applied = 0;
+      let failed: string | null = null;
+      for (const action of actions) {
+        try {
+          if (action.type === "add_scene" && action.title?.trim()) {
+            await api.createScene(action.title.trim());
+            applied += 1;
+          } else if (action.type === "add_block" && action.sceneId && action.kind) {
+            const sceneId = action.sceneId;
+            const before = new Set(
+              get().project?.scenes.find((scene) => scene.id === sceneId)?.nodes.map((n) => n.id) ?? [],
+            );
+            const env = await api.addNode(
+              sceneId,
+              action.kind,
+              undefined,
+              (action.params ?? {}) as Record<string, unknown>,
+            );
+            applyEnvelope(env);
+            const inserted = env.project.scenes
+              .find((scene) => scene.id === sceneId)
+              ?.nodes.find((node) => !before.has(node.id));
+            if (inserted) {
+              set({ activeSceneId: sceneId, selectedNodeId: inserted.id, tab: "scene" });
+            }
+            applied += 1;
+          } else if (action.type === "set_start_scene" && action.sceneId) {
+            const env = await api.setStartScene(action.sceneId);
+            applyEnvelope(env);
+            applied += 1;
+          } else {
+            failed = action.type;
+          }
+        } catch (error) {
+          failed = errText(error);
+          break;
+        }
+      }
+      set({
+        aiMessages: get().aiMessages.map((entry) =>
+          entry.id === messageId ? { ...entry, applied: failed === null && applied > 0 } : entry,
+        ),
+      });
+      await get().refreshGraph();
+      if (applied > 0) {
+        get().toast("success", i18n.t("ai.applied", { count: applied }));
+      }
+      if (failed) get().toast("error", i18n.t("ai.applyFailed", { what: failed }));
+    },
 
     save: async () => {
       const status = await guarded(() => api.save());

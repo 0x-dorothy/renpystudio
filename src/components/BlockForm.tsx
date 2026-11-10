@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, MousePointerClick, Plus, Trash2 } from "lucide-react";
 import { useStudio } from "../store";
 import {
   Button,
@@ -16,7 +16,7 @@ import {
   localeText,
   type FieldDef,
 } from "../blocks/registry";
-import type { StudioNode } from "../types";
+import type { Hotspot, StudioNode } from "../types";
 import { newId } from "../util";
 import { assetUrl } from "../util";
 
@@ -34,6 +34,7 @@ export function BlockForm({ node }: { node: StudioNode }) {
   const project = useStudio((s) => s.project);
   const editLocale = useStudio((s) => s.editLocale);
   const updateNodeParams = useStudio((s) => s.updateNodeParams);
+  const openModal = useStudio((s) => s.openModal);
   const assets = useStudio((s) => s.assets);
   const [draft, setDraft] = useState<Record<string, unknown>>(node.params);
   const [pending, setPending] = useState(false);
@@ -339,6 +340,33 @@ export function BlockForm({ node }: { node: StudioNode }) {
             />
           </Field>
         );
+      case "hotspots": {
+        const zones = (value as Hotspot[] | undefined) ?? [];
+        return (
+          <Field key={field.key} label={t(field.labelKey)} hint={t("pointclick.blockHint")}>
+            <div className="card p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] text-[var(--muted)]">
+                  {t("pointclick.zones", { count: zones.length })}
+                </span>
+                <Button size="sm" variant="primary" onClick={() => openModal("hotspots")}>
+                  <MousePointerClick size={13} /> {t("pointclick.open")}
+                </Button>
+              </div>
+              {zones.length ? (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {zones.slice(0, 6).map((zone, index) => (
+                    <span key={zone.id} className="chip">
+                      {index + 1}. {zone.label?.[editLocale] || t("pointclick.zoneLabel")}
+                    </span>
+                  ))}
+                  {zones.length > 6 ? <span className="chip">+{zones.length - 6}</span> : null}
+                </div>
+              ) : null}
+            </div>
+          </Field>
+        );
+      }
       case "menuOptions":
         return (
           <MenuOptionsEditor

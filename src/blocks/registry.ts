@@ -9,6 +9,7 @@ import {
   MessageSquare,
   MonitorPlay,
   MonitorX,
+  MousePointerClick,
   Music,
   Pause,
   PersonStanding,
@@ -40,6 +41,7 @@ export type FieldType =
   | "variable"
   | "expression"
   | "menuOptions"
+  | "hotspots"
   | "code"
   | "setValue";
 
@@ -212,6 +214,17 @@ export const BLOCKS: BlockDef[] = [
     fields: [
       { key: "who", type: "character", labelKey: "field.who" },
       { key: "preset", type: "select", labelKey: "field.preset", options: ANIM_PRESETS },
+    ],
+  },
+  {
+    kind: "pointclick",
+    labelKey: "block.pointclick",
+    icon: MousePointerClick,
+    category: "visual",
+    fields: [
+      { key: "bg", type: "asset", assetKind: "image", labelKey: "field.bg" },
+      { key: "prompt", type: "localized", labelKey: "field.prompt" },
+      { key: "hotspots", type: "hotspots", labelKey: "field.hotspots" },
     ],
   },
   {
@@ -417,6 +430,14 @@ export function blockSummary(
     }
     case "jump":
       return t("summary.jump", { target: sceneName(params.target) });
+    case "pointclick": {
+      const zones = Array.isArray(params.hotspots) ? params.hotspots.length : 0;
+      const bg = String(params.bg ?? "")
+        .split("/")
+        .pop()
+        ?.replace(/\.[^.]+$/, "");
+      return `${t("summary.zones", { count: zones })}${bg ? ` · ${bg}` : ""}`;
+    }
     case "return":
       return params.toMainMenu ? t("field.toMainMenu") : t("summary.return");
     case "if": {

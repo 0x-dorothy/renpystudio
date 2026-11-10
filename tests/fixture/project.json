@@ -1,4 +1,4 @@
-﻿{
+{
   "formatVersion": 1,
   "meta": {
     "title": "Тестовая новелла",
@@ -118,6 +118,7 @@
       "color": null,
       "nodes": [
         { "id": "n_street_bg", "kind": "scene", "params": { "bg": "images/bg/street.png", "transition": "fade", "duration": 0.8 }, "source": "studio", "locked": false },
+        { "id": "nd_pc_1", "kind": "pointclick", "params": { "bg": "images/bg/room.png", "prompt": { "ru": "Куда пойти?", "en": "Where to?" }, "hotspots": [ { "id": "hs_door", "label": { "ru": "Дверь", "en": "Door" }, "shape": "rect", "x": 0.62, "y": 0.26, "w": 0.22, "h": 0.46, "points": [], "action": "jump", "target": "sc_ending" }, { "id": "hs_window", "label": { "ru": "Окно", "en": "Window" }, "shape": "polygon", "x": 0.1, "y": 0.18, "w": 0.3, "h": 0.34, "points": [[0.12, 0.22], [0.38, 0.18], [0.4, 0.46], [0.14, 0.5]], "action": "tooltip", "target": null } ] }, "source": "studio", "locked": false },
         { "id": "n_street_hide", "kind": "hide", "params": { "who": "ch_mira", "image": null, "transition": "dissolve" }, "source": "studio", "locked": false },
         { "id": "n_street_code", "kind": "code", "params": { "code": "$ renpy.notify(\"Глава 1 завершена\")", "language": "renpy" }, "source": "studio", "locked": false },
         { "id": "n_street_label", "kind": "label", "params": { "name": "street_end" }, "source": "studio", "locked": false },

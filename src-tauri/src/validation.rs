@@ -297,6 +297,77 @@ pub fn validate(project: &Project, assets: &[AssetInfo]) -> ValidationReport {
                 NodeKind::RETURN => {
                     ends_game = true;
                 }
+                NodeKind::POINTCLICK => {
+                    let p: PointClickParams = node.typed();
+                    if p.bg.trim().is_empty() {
+                        report.issues.push(
+                            Issue::warning(
+                                "pointclick-no-bg",
+                                "У блока «Точки и клики» не выбран фон — зоны будут висеть над прошлой сценой.",
+                            )
+                            .at(&scene.id, Some(&node.id)),
+                        );
+                    }
+                    if p.hotspots.is_empty() {
+                        report.issues.push(
+                            Issue::warning(
+                                "pointclick-empty",
+                                "В блоке «Точки и клики» нет ни одной зоны — игроку некуда нажимать.",
+                            )
+                            .at(&scene.id, Some(&node.id)),
+                        );
+                    }
+                    let mut exits = 0usize;
+                    for (index, hotspot) in p.hotspots.iter().enumerate() {
+                        let (_, _, w, h) = hotspot.bounds();
+                        if w <= 0.0005 || h <= 0.0005 {
+                            report.issues.push(
+                                Issue::warning(
+                                    "pointclick-zero-zone",
+                                    format!("Зона №{} имеет нулевой размер — её не видно и не нажать.", index + 1),
+                                )
+                                .at(&scene.id, Some(&node.id)),
+                            );
+                        }
+                        if hotspot.action != "jump" {
+                            continue;
+                        }
+                        match hotspot.target.as_deref().filter(|t| !t.trim().is_empty()) {
+                            Some(target) => {
+                                outgoing += 1;
+                                exits += 1;
+                                if !known.contains(target) && project.scene_by_id(target).is_none() {
+                                    report.issues.push(
+                                        Issue::error(
+                                            "dangling-pointclick",
+                                            format!(
+                                                "Зона №{} ведёт в никуда: «{target}». Выберите сцену для перехода.",
+                                                index + 1
+                                            ),
+                                        )
+                                        .at(&scene.id, Some(&node.id)),
+                                    );
+                                }
+                            }
+                            None => report.issues.push(
+                                Issue::warning(
+                                    "pointclick-empty-target",
+                                    format!("Зона №{} не указывает, куда вести.", index + 1),
+                                )
+                                .at(&scene.id, Some(&node.id)),
+                            ),
+                        }
+                    }
+                    if !p.hotspots.is_empty() && exits == 0 {
+                        report.issues.push(
+                            Issue::warning(
+                                "pointclick-no-exit",
+                                "Ни одна зона не ведёт дальше: экран закроется только по Esc.",
+                            )
+                            .at(&scene.id, Some(&node.id)),
+                        );
+                    }
+                }
                 NodeKind::SAY => {
                     let p: SayParams = node.typed();
                     if p.text.values().all(|t| t.trim().is_empty()) && p.voice.is_none() {
@@ -429,6 +500,14 @@ pub fn validate(project: &Project, assets: &[AssetInfo]) -> ValidationReport {
                         .into_iter()
                         .filter_map(|target| reverse.get(&target).cloned())
                         .collect(),
+                    NodeKind::POINTCLICK => {
+                        let p: PointClickParams = node.typed();
+                        p.hotspots
+                            .into_iter()
+                            .filter(|hotspot| hotspot.action == "jump")
+                            .filter_map(|hotspot| hotspot.target)
+                            .collect()
+                    }
                     _ => vec![],
                 };
                 for target in targets {
@@ -571,6 +650,33 @@ pub fn graph_data(project: &Project) -> GraphData {
                                 condition: None,
                             });
                         }
+                    }
+                }
+                NodeKind::POINTCLICK => {
+                    let p: PointClickParams = node.typed();
+                    for (index, hotspot) in p.hotspots.iter().enumerate() {
+                        if hotspot.action != "jump" {
+                            continue;
+                        }
+                        let Some(target) = hotspot.target.clone().filter(|t| !t.trim().is_empty()) else {
+                            continue;
+                        };
+                        let text = hotspot
+                            .label
+                            .get(&project.meta.default_locale)
+                            .cloned()
+                            .or_else(|| hotspot.label.values().next().cloned())
+                            .filter(|t| !t.trim().is_empty())
+                            .unwrap_or_else(|| format!("Зона {}", index + 1));
+                        edges.push(GraphEdge {
+                            id: format!("{}:{}", node.id, hotspot.id),
+                            from_scene: scene.id.clone(),
+                            to_scene: Some(target),
+                            kind: "choice".into(),
+                            label: text,
+                            node_id: node.id.clone(),
+                            condition: None,
+                        });
                     }
                 }
                 _ => {}

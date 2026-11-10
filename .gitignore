@@ -11,3 +11,4 @@ src-tauri/gen/
 .vite/
 plugins/
 
+docs/HANDOFF-PROMPT.md

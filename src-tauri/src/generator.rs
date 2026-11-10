@@ -78,6 +78,7 @@ pub fn kind_label(kind: &str) -> &'static str {
         NodeKind::CALL_SCREEN => "Показать экран",
         NodeKind::HIDE_SCREEN => "Скрыть экран",
         NodeKind::CODE => "Код",
+        NodeKind::POINTCLICK => "Точки и клики",
         _ => "Блок",
     }
 }
@@ -508,8 +509,12 @@ pub fn generate(project: &Project, opts: &GenOptions) -> GeneratedBundle {
         w.blank();
 
         let mut body_written = 0usize;
+        let mut pc = PcState {
+            scene_slug: slugify(&label.trim_start_matches("scene_").replace('_', " ")),
+            ..Default::default()
+        };
         for node in &scene.nodes {
-            match emit_node(&mut w, node, project, &labels, &vars, &mut images) {
+            match emit_node(&mut w, node, project, &labels, &vars, &mut images, &mut pc) {
                 Ok(true) => {
                     body_written += 1;
                     w.blank();
@@ -533,6 +538,17 @@ pub fn generate(project: &Project, opts: &GenOptions) -> GeneratedBundle {
         if last_statement_is_label {
             w.stmt(1, "pass");
             w.blank();
+        }
+        // Point-and-click screens are top-level statements: they follow the
+        // scene label, and their own anchors keep lint errors navigable.
+        for (node_id, lines) in &pc.screens {
+            w.blank();
+            let start = w.lines.len() as u32 + 1;
+            for line in lines {
+                w.raw(line.clone());
+            }
+            let end = w.lines.len() as u32;
+            w.anchors.push((node_id.clone(), start, end));
         }
         // Trim the trailing blank line for a tidy file end.
         while w.lines.last().map(|l| l.is_empty()).unwrap_or(false) {
@@ -645,6 +661,39 @@ transform studio_zoom:
 transform studio_soft_pulse:
     ease 0.6 zoom 1.02
     ease 0.6 zoom 1.0
+
+# ── Кликабельные зоны (point-and-click) ───────────────────────
+# Маска клика для многоугольной зоны: Ren'Py вызывает объект с
+# координатами курсора и ожидает True/False. Размеры кнопки приходят
+# вторым вызовом, поэтому всё считается в долях, без привязки к
+# разрешению проекта.
+init python:
+    class _StudioHit(object):
+        # Точка внутри многоугольника — маска клика для зоны point-and-click.
+
+        def __init__(self, points):
+            self.points = list(points)
+
+        def __call__(self, x, y):
+            points = self.points
+
+            def inside(x, y, w, h):
+                if w <= 0 or h <= 0 or len(points) < 3:
+                    return False
+                px = x / float(w)
+                py = y / float(h)
+                hit = False
+                j = len(points) - 1
+                for i in range(len(points)):
+                    xi, yi = points[i]
+                    xj, yj = points[j]
+                    if (yi > py) != (yj > py):
+                        if px < (xj - xi) * (py - yi) / (yj - yi) + xi:
+                            hit = not hit
+                    j = i
+                return hit
+
+            return inside
 ";
     out.files.push(GeneratedFile {
         path: "game/studio_transforms.rpy".into(),
@@ -890,6 +939,27 @@ fn align_factor(align: &str) -> &'static str {
 // Block emission
 // ---------------------------------------------------------------------------
 
+/// Collects the point-and-click screens of one scene file. Screens must be
+/// top-level statements, so they are appended after the scene label.
+#[derive(Default)]
+struct PcState {
+    scene_slug: String,
+    count: usize,
+    screens: Vec<(String, Vec<String>)>,
+}
+
+impl PcState {
+    fn next_screen_name(&mut self) -> String {
+        self.count += 1;
+        let slug = if self.scene_slug.trim().is_empty() {
+            "scene"
+        } else {
+            self.scene_slug.as_str()
+        };
+        format!("pc_{slug}_{}", self.count)
+    }
+}
+
 fn emit_node(
     w: &mut Writer,
     node: &Node,
@@ -897,6 +967,7 @@ fn emit_node(
     labels: &SceneLabels,
     vars: &HashMap<String, String>,
     images: &mut ImageDefs,
+    pc: &mut PcState,
 ) -> Result<bool, String> {
     let kind = node.kind.as_str();
     if !NodeKind::ALL.contains(&kind) {
@@ -917,7 +988,7 @@ fn emit_node(
                 return Ok(false);
             }
             if let Some(voice) = p.voice.as_deref().filter(|v| !v.trim().is_empty()) {
-                w.stmt(1, &format!("voice {}", rpy_string(voice)));
+                w.stmt(1, &format!("voice {}", rpy_string(&asset_rel(voice))));
             }
             let body = text.clone();
             let who = p.who.as_ref().and_then(|id| {
@@ -992,7 +1063,7 @@ fn emit_node(
             let pose = p.image.as_deref().map(clean_attribute).unwrap_or_default();
             if !pose.is_empty() {
                 if let Some(asset) = p.asset.as_deref().filter(|a| !a.trim().is_empty()) {
-                    images.add(format!("{tag} {pose}"), asset.to_string());
+                    images.add(format!("{tag} {pose}"), asset_rel(asset));
                 }
             }
             let mut ats: Vec<String> = Vec::new();
@@ -1061,7 +1132,7 @@ fn emit_node(
                 return Ok(false);
             }
             if let Some(asset) = p.asset.as_deref().filter(|a| !a.trim().is_empty()) {
-                images.add(format!("{tag} {pose}"), asset.to_string());
+                images.add(format!("{tag} {pose}"), asset_rel(asset));
             }
             let mut line = format!("show {tag} {pose}");
             if let Some(tr) = transition_expr(p.transition.as_deref().unwrap_or("dissolve"), None) {
@@ -1207,7 +1278,7 @@ fn emit_node(
                 }
                 "queue" => {
                     if let Some(file) = p.file.as_deref().filter(|f| !f.trim().is_empty()) {
-                        w.stmt(1, &format!("queue {channel} {}", rpy_string(file)));
+                        w.stmt(1, &format!("queue {channel} {}", rpy_string(&asset_rel(file))));
                     } else {
                         return Ok(false);
                     }
@@ -1216,7 +1287,7 @@ fn emit_node(
                     let Some(file) = p.file.as_deref().filter(|f| !f.trim().is_empty()) else {
                         return Ok(false);
                     };
-                    let mut line = format!("play {channel} {}", rpy_string(file));
+                    let mut line = format!("play {channel} {}", rpy_string(&asset_rel(file)));
                     if !p.r#loop {
                         line.push_str(" noloop");
                     }
@@ -1233,7 +1304,7 @@ fn emit_node(
             let Some(file) = Some(p.file.as_str()).filter(|f| !f.trim().is_empty()) else {
                 return Ok(false);
             };
-            let mut line = format!("play sound {}", rpy_string(file));
+            let mut line = format!("play sound {}", rpy_string(&asset_rel(file)));
             if p.r#loop {
                 line.push_str(" loop");
             }
@@ -1295,6 +1366,27 @@ fn emit_node(
             }
             w.stmt(1, "# --- конец ручного кода ---");
         }
+        NodeKind::POINTCLICK => {
+            let p: PointClickParams = node.typed();
+            let name = pc.next_screen_name();
+            if p.hotspots.is_empty() {
+                w.stmt(
+                    1,
+                    "# В блоке пока нет зон: экран покажет фон и подсказку.",
+                );
+            }
+            w.stmt(1, &format!("call screen {name}"));
+            let lines = pointclick_screen(
+                &name,
+                &p,
+                node,
+                labels,
+                images,
+                &w.locale,
+                &w.fallback,
+            );
+            pc.screens.push((node.id.clone(), lines));
+        }
         _ => {
             emitted = false;
         }
@@ -1304,6 +1396,145 @@ fn emit_node(
         w.anchors.push((node.id.clone(), start, end.max(start)));
     }
     Ok(emitted)
+}
+
+/// Screen definition for a point-and-click block. Zones are positioned with
+/// fractions of the screen and sized from `config.screen_width/height`, so the
+/// same project works at any resolution.
+fn pointclick_screen(
+    name: &str,
+    p: &PointClickParams,
+    node: &Node,
+    labels: &SceneLabels,
+    images: &mut ImageDefs,
+    locale: &str,
+    fallback: &str,
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let short = node.id.split('-').next().unwrap_or(&node.id);
+    let mut push = |indent: usize, text: String| {
+        lines.push(format!("{}{}", "    ".repeat(indent), text));
+    };
+
+    push(0, format!("# ── Точки и клики · блок {short} ─────────────────────────"));
+    push(0, format!("screen {name}():"));
+    push(1, "modal True".into());
+    push(1, "".into());
+
+    if p.bg.trim().is_empty() {
+        push(1, "# Фон не задан — останется фон предыдущей сцены.".into());
+    } else {
+        let bg = scene_image_name(&p.bg, images);
+        push(1, format!("# Фон: {}", p.bg));
+        push(1, format!("add {}", rpy_string(&bg)));
+    }
+
+    let prompt = pick_locale(&p.prompt, locale, fallback);
+    if !prompt.trim().is_empty() {
+        push(1, "".into());
+        push(
+            1,
+            format!(
+                "text {} xalign 0.5 yalign 0.06 size 30 color \"#f5f3ff\" outlines [(2, \"#000000b0\", 0, 0)]",
+                rpy_text(&prompt, true)
+            ),
+        );
+    }
+
+    if !p.hotspots.is_empty() {
+        push(1, "".into());
+        push(
+            1,
+            format!("# ── Зоны ({}) ──", p.hotspots.len()),
+        );
+    }
+
+    for (index, hotspot) in p.hotspots.iter().enumerate() {
+        let (x, y, w, h) = hotspot.bounds();
+        let label_text = pick_locale(&hotspot.label, locale, fallback);
+        let title = if label_text.trim().is_empty() {
+            format!("Зона {}", index + 1)
+        } else {
+            label_text.to_string()
+        };
+        push(1, "".into());
+        if w <= 0.0005 || h <= 0.0005 {
+            push(
+                1,
+                format!("# «{title}»: зона вырождена (нулевая площадь) — пропущена."),
+            );
+            continue;
+        }
+        let action = match hotspot.action.as_str() {
+            "jump" => hotspot
+                .target
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|target| {
+                    format!(
+                        "action Jump({})",
+                        rpy_string(&label_or_raw(&resolve_target(target, labels)))
+                    )
+                })
+                .unwrap_or_else(|| "action NullAction()".into()),
+            "return" => "action Return()".into(),
+            _ => "action NullAction()".into(),
+        };
+        push(1, format!("# «{title}» → {}", match hotspot.action.as_str() {
+            "jump" => hotspot
+                .target
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+                .map(|target| format!("переход: {target}"))
+                .unwrap_or_else(|| "цель не задана".to_string()),
+            "return" => "выход из экрана".to_string(),
+            _ => "только подпись".to_string(),
+        }));
+        push(1, "button:".into());
+        push(2, format!("xpos {x:.3}"));
+        push(2, format!("ypos {y:.3}"));
+        push(
+            2,
+            format!(
+                "xysize (int({w:.3} * config.screen_width), int({h:.3} * config.screen_height))"
+            ),
+        );
+        push(2, action);
+        if !label_text.trim().is_empty() {
+            push(2, format!("tooltip {}", rpy_string(&label_text)));
+        }
+        if hotspot.shape == "polygon" && hotspot.points.len() >= 3 {
+            let points = hotspot
+                .local_points()
+                .iter()
+                .map(|(px, py)| format!("({px:.4}, {py:.4})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            push(2, format!("focus_mask _StudioHit([{points}])"));
+        }
+        push(2, "hover_background Solid(\"#ffffff12\")".into());
+    }
+
+    push(1, "".into());
+    push(1, "# Esc или правая кнопка — выйти из экрана.".into());
+    push(1, "key \"game_menu\" action Return()".into());
+    push(1, "".into());
+
+    if p.hotspots.iter().any(|h| !pick_locale(&h.label, locale, fallback).trim().is_empty()) {
+        push(1, "# Подпись зоны под курсором.".into());
+        push(1, "$ _pc_tip = GetTooltip()".into());
+        push(1, "".into());
+        push(1, "if _pc_tip:".into());
+        push(2, "frame:".into());
+        push(3, "xalign 0.5".into());
+        push(3, "yalign 0.92".into());
+        push(3, "padding (18, 8)".into());
+        push(3, "background Solid(\"#0b0a12e0\")".into());
+        push(3, "".into());
+        push(3, "text _pc_tip size 22 color \"#f5f3ff\"".into());
+    }
+
+    lines
 }
 
 fn set_line(op: &VarOp) -> Option<String> {
@@ -1376,17 +1607,30 @@ fn with_cps(body: &str, cps: Option<u32>) -> String {
     }
 }
 
+/// Asset paths are stored two ways in the wild: relative to `game/` (what the
+/// generator emits) and relative to the project root (what the asset library
+/// returns). Ren'Py always wants the form relative to `game/`.
+fn asset_rel(path: &str) -> String {
+    let normalized = path.trim().replace('\\', "/");
+    let trimmed = normalized.trim_start_matches('/');
+    trimmed
+        .strip_prefix("game/")
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
 fn scene_image_name(path: &str, images: &mut ImageDefs) -> String {
     if is_image_name_reference(path) {
         return clean_attribute(path);
     }
-    let cleaned = clean_asset_name(path);
+    let relative = asset_rel(path);
+    let cleaned = clean_asset_name(&relative);
     let name = if cleaned.starts_with("bg ") || cleaned.starts_with("cg ") {
         cleaned
     } else {
         format!("bg {cleaned}")
     };
-    images.add(name.clone(), path.to_string());
+    images.add(name.clone(), relative);
     name
 }
 
@@ -1518,6 +1762,104 @@ mod tests {
             .expect("scene file");
         assert!(script.content.contains("label door_entry:"));
         assert!(script.content.trim_end().ends_with("pass") || script.content.contains("label door_entry:\n\n    pass"));
+    }
+
+    #[test]
+    fn pointclick_generates_clickable_screen() {
+        let mut project = sample_project();
+        project.scenes[0].nodes.push(Node::new(
+            NodeKind::POINTCLICK,
+            json!({
+                "bg": "images/bg/room.png",
+                "prompt": { "ru": "Куда идём?" },
+                "hotspots": [
+                    {
+                        "id": "h1",
+                        "label": { "ru": "Дверь" },
+                        "shape": "rect",
+                        "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4,
+                        "points": [],
+                        "action": "jump",
+                        "target": "sc_b"
+                    },
+                    {
+                        "id": "h2",
+                        "label": { "ru": "Окно" },
+                        "shape": "polygon",
+                        "x": 0.5, "y": 0.1, "w": 0.4, "h": 0.5,
+                        "points": [[0.5, 0.1], [0.9, 0.1], [0.9, 0.6], [0.5, 0.6]],
+                        "action": "tooltip",
+                        "target": null
+                    }
+                ]
+            }),
+        ));
+        let bundle = generate(&project, &GenOptions::default());
+        let script = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/script_prologue.rpy")
+            .expect("scene file");
+        assert!(script.content.contains("call screen pc_prologue_1"));
+        assert!(script.content.contains("screen pc_prologue_1():"));
+        assert!(script.content.contains("action Jump(\"scene_door\")"));
+        assert!(script.content.contains("tooltip \"Дверь\""));
+        assert!(script.content.contains("focus_mask _StudioHit(["));
+        assert!(script.content.contains("xpos 0.100"));
+        assert!(script.content.contains("xysize (int(0.300 * config.screen_width)"));
+        // The screen lives at file level: no indentation in front of `screen`.
+        assert!(script.content.contains("\nscreen pc_prologue_1():\n"));
+        let transforms = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/studio_transforms.rpy")
+            .expect("transforms");
+        assert!(transforms.content.contains("class _StudioHit"));
+        // Lint inside the generated screen still maps back to the block.
+        let node_id = project.scenes[0].nodes.last().unwrap().id.clone();
+        assert!(bundle.srcmap.iter().any(|entry| entry.node_id == node_id));
+    }
+
+    #[test]
+    fn pointclick_screen_name_is_unique_per_block() {
+        let mut project = sample_project();
+        for _ in 0..2 {
+            project.scenes[0].nodes.push(Node::new(
+                NodeKind::POINTCLICK,
+                json!({ "bg": "images/bg/room.png", "hotspots": [] }),
+            ));
+        }
+        let bundle = generate(&project, &GenOptions::default());
+        let script = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/script_prologue.rpy")
+            .expect("scene file");
+        assert!(script.content.contains("screen pc_prologue_1():"));
+        assert!(script.content.contains("screen pc_prologue_2():"));
+    }
+
+    #[test]
+    fn asset_paths_are_game_relative() {
+        let mut project = sample_project();
+        project.scenes[0].nodes[0] = Node::new(
+            NodeKind::SCENE,
+            json!({ "bg": "game/images/bg/room.png", "transition": "dissolve" }),
+        );
+        let bundle = generate(&project, &GenOptions::default());
+        let images = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/images.rpy")
+            .expect("images");
+        // The asset library returns root-relative paths; Ren'Py wants game-relative.
+        assert!(images.content.contains("image bg room = \"images/bg/room.png\""));
+        let script = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/script_prologue.rpy")
+            .expect("scene file");
+        assert!(script.content.contains("scene bg room"));
     }
 
     #[test]

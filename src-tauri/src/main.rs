@@ -1,6 +1,7 @@
-﻿#![cfg_attr(all(not(debug_assertions), not(feature = "cli")), windows_subsystem = "windows")]
+#![cfg_attr(all(not(debug_assertions), not(feature = "cli")), windows_subsystem = "windows")]
 
 mod app;
+mod ai;
 mod assets;
 mod cli;
 mod commands;

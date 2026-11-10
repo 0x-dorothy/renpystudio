@@ -114,9 +114,12 @@ export const api = {
   ensureSpriteFolder: (relative: string) =>
     invoke<string>("ensure_sprite_folder", { relative }),
 
-  mcpStart: (port?: number) => invoke<{ running: boolean; port: number }>("mcp_start", { port }),
-  mcpStop: () => invoke<{ running: boolean }>("mcp_stop"),
+  mcpStart: (port?: number) => invoke<{ running: boolean; port: number }>("mcp_start", { port }),  mcpStop: () => invoke<{ running: boolean }>("mcp_stop"),
   mcpStatus: () => invoke<{ running: boolean; port?: number; url?: string }>("mcp_status"),
+
+  aiModels: () => invoke<import("./types").AiModelInfo[]>("ai_models"),
+  aiChat: (messages: { role: string; content: string }[], sceneId?: string | null) =>
+    invoke<import("./types").AiReply>("ai_chat", { messages, sceneId }),
 
   revealInExplorer: (path: string) => invoke<void>("open_in_explorer", { path }),
   defaultParams: (kind: string) =>

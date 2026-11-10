@@ -1,4 +1,4 @@
-﻿//! Application wiring: plugins, managed state, IPC handler, asset protocol.
+//! Application wiring: plugins, managed state, IPC handler, asset protocol.
 
 use crate::commands::{self, AppState, Shared};
 use crate::settings::Settings;
@@ -200,7 +200,9 @@ pub fn run() {
             commands::mcp_status,
             commands::open_in_explorer,
             commands::default_block_params,
-            commands::project_path
+            commands::project_path,
+            commands::ai_models,
+            commands::ai_chat
         ])
         .run(tauri::generate_context!())
         .expect("error while running RenPy Studio");

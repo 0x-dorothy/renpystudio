@@ -36,7 +36,9 @@ export function basename(path: string): string {
 
 /** Custom protocol URL for previewing project assets in the webview. */
 export function assetUrl(path: string): string {
-  const encoded = path
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  const relative = normalized.startsWith("game/") ? normalized : `game/${normalized}`;
+  const encoded = relative
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");

@@ -315,7 +315,7 @@ function GraphInner() {
         });
       }
     } else {
-      const flowKinds = ["menu", "if"];
+      const flowKinds = ["menu", "if", "pointclick"];
       for (const scene of project.scenes) {
         for (const node of scene.nodes) {
           if (!flowKinds.includes(node.kind)) continue;
@@ -326,8 +326,13 @@ function GraphInner() {
             id,
             position: { x: 0, y: 0 },
             data: {
-              label: node.kind === "menu" ? t("block.menu") : t("block.if"),
-              tone: node.kind === "menu" ? "var(--accent)" : "var(--warn)",
+              label:
+                node.kind === "menu"
+                  ? t("block.menu")
+                  : node.kind === "if"
+                    ? t("block.if")
+                    : t("block.pointclick"),
+              tone: node.kind === "menu" ? "var(--accent)" : node.kind === "if" ? "var(--warn)" : "var(--accent)",
             },
             type: "flow",
             style: { width: 170 },

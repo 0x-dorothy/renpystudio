@@ -245,6 +245,11 @@ pub fn default_params(project: &Project, kind: &str) -> Value {
         NodeKind::CALL_SCREEN => json!({ "screen": "", "withNone": true }),
         NodeKind::HIDE_SCREEN => json!({ "screen": "" }),
         NodeKind::CODE => json!({ "code": "", "language": "renpy" }),
+        NodeKind::POINTCLICK => json!({
+            "bg": "",
+            "prompt": default_locale_text(project, ""),
+            "hotspots": []
+        }),
         _ => json!({}),
     }
 }
@@ -1862,6 +1867,20 @@ pub fn node_retarget(
                     }
                     node.params = serde_json::to_value(p).unwrap_or(Value::Null);
                 }
+                NodeKind::POINTCLICK => {
+                    let hotspot_id = option_id.ok_or("Не указана зона клика")?;
+                    let mut p: PointClickParams = node.typed();
+                    let hotspot = p
+                        .hotspots
+                        .iter_mut()
+                        .find(|hotspot| hotspot.id == hotspot_id)
+                        .ok_or("Зона не найдена")?;
+                    hotspot.target = target.clone();
+                    if target.is_some() {
+                        hotspot.action = "jump".into();
+                    }
+                    node.params = serde_json::to_value(p).unwrap_or(Value::Null);
+                }
                 _ => return Err("У этого блока нет перехода".into()),
             }
             Ok(())
@@ -1940,7 +1959,29 @@ pub fn plugin_disable(state: State<'_, Shared>, id: String) -> Result<StateEnvel
             .find(|plugin| plugin.id == id)
             .map(|plugin| plugin.files.clone())
             .ok_or("Плагин не включён в проект")?;
-        crate::plugins::uninstall(&root, &files);
+        // Shared dependencies (7DOTS.rpy and friends) may be shipped by several
+        // plugins: keep anything another enabled plugin still declares.
+        let others: std::collections::HashSet<String> = store
+            .project
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.id != id)
+            .map(|plugin| plugin.id.clone())
+            .collect();
+        let keep: std::collections::HashSet<String> = if others.is_empty() {
+            Default::default()
+        } else {
+            crate::plugins::scan(&crate::plugins::plugins_root())
+                .into_iter()
+                .filter(|plugin| others.contains(&plugin.id))
+                .flat_map(|plugin| plugin.files.into_iter().map(|file| file.target))
+                .collect()
+        };
+        let removable: Vec<String> = files
+            .into_iter()
+            .filter(|file| !keep.contains(file.trim_start_matches("game/")))
+            .collect();
+        crate::plugins::uninstall(&root, &removable);
         store.checkpoint();
         store.project.plugins.retain(|plugin| plugin.id != id);
         store.save()?;
@@ -1981,4 +2022,47 @@ pub fn ensure_sprite_folder(
     }
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// AI assistant (OpenAI-compatible provider)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn ai_models(state: State<'_, Shared>) -> Result<Vec<crate::ai::AiModelInfo>, String> {
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| "Настройки недоступны".to_string())?
+        .ai
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || crate::ai::list_models(&settings))
+        .await
+        .map_err(|err| format!("Сбой запроса: {err}"))?
+}
+
+#[tauri::command]
+pub async fn ai_chat(
+    state: State<'_, Shared>,
+    messages: Vec<crate::ai::ChatMessage>,
+    scene_id: Option<String>,
+) -> Result<crate::ai::AiReply, String> {
+    let (settings, system) = {
+        let store = lock_store(&state)?;
+        let system = crate::ai::system_prompt(&store.project, scene_id.as_deref());
+        drop(store);
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| "Настройки недоступны".to_string())?
+            .ai
+            .clone();
+        (settings, system)
+    };
+    if messages.is_empty() {
+        return Err("Пустой запрос".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || crate::ai::chat(&settings, &system, &messages))
+        .await
+        .map_err(|err| format!("Сбой запроса: {err}"))?
 }

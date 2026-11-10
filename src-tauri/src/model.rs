@@ -279,8 +279,9 @@ impl NodeKind {
     pub const CALL_SCREEN: &'static str = "show_screen";
     pub const HIDE_SCREEN: &'static str = "hide_screen";
     pub const CODE: &'static str = "code";
+    pub const POINTCLICK: &'static str = "pointclick";
 
-    pub const ALL: [&'static str; 20] = [
+    pub const ALL: [&'static str; 21] = [
         Self::SAY,
         Self::NARRATE,
         Self::COMMENT,
@@ -301,12 +302,16 @@ impl NodeKind {
         Self::CALL_SCREEN,
         Self::HIDE_SCREEN,
         Self::CODE,
+        Self::POINTCLICK,
     ];
 
     /// Kinds that create an outgoing edge on the graph.
     #[allow(dead_code)]
     pub fn is_flow(kind: &str) -> bool {
-        matches!(kind, Self::MENU | Self::JUMP | Self::IF | Self::RETURN)
+        matches!(
+            kind,
+            Self::MENU | Self::JUMP | Self::IF | Self::RETURN | Self::POINTCLICK
+        )
     }
 }
 
@@ -540,6 +545,90 @@ pub struct CodeParams {
     /// `renpy` (top-level statements) or `python` ($-block / python:).
     #[serde(default)]
     pub language: String,
+}
+
+// ---------------------------------------------------------------------------
+// Point-and-click
+// ---------------------------------------------------------------------------
+
+/// A scene rendered as a background with clickable zones.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PointClickParams {
+    /// Background image path (`images/...`), shown while the screen is open.
+    pub bg: String,
+    /// Optional line of text at the top of the screen.
+    pub prompt: LocalizedText,
+    pub hotspots: Vec<Hotspot>,
+}
+
+/// One clickable zone. All coordinates are normalized to the screen (0..1), so
+/// the project renders correctly at any resolution.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Hotspot {
+    pub id: String,
+    /// Shown as a tooltip on hover and used as the graph edge label.
+    pub label: LocalizedText,
+    /// `rect` or `polygon`.
+    pub shape: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Polygon vertices as normalized `[x, y]` pairs (empty for rectangles).
+    pub points: Vec<Vec<f32>>,
+    /// `jump` | `tooltip` (no action) | `return`.
+    pub action: String,
+    /// Scene id or raw label for `jump`.
+    pub target: Option<String>,
+}
+
+impl Hotspot {
+    /// Bounding box in normalized coordinates. Polygons derive it from their
+    /// points so a hand-edited project can never desynchronise the two.
+    pub fn bounds(&self) -> (f32, f32, f32, f32) {
+        if self.shape == "polygon" && self.points.len() >= 3 {
+            let mut min_x = f32::MAX;
+            let mut min_y = f32::MAX;
+            let mut max_x = f32::MIN;
+            let mut max_y = f32::MIN;
+            for point in &self.points {
+                if point.len() < 2 {
+                    continue;
+                }
+                min_x = min_x.min(point[0]);
+                min_y = min_y.min(point[1]);
+                max_x = max_x.max(point[0]);
+                max_y = max_y.max(point[1]);
+            }
+            if min_x <= max_x && min_y <= max_y {
+                let x = min_x.clamp(0.0, 1.0);
+                let y = min_y.clamp(0.0, 1.0);
+                let w = (max_x - min_x).clamp(0.0, 1.0 - x);
+                let h = (max_y - min_y).clamp(0.0, 1.0 - y);
+                return (x, y, w, h);
+            }
+        }
+        let x = self.x.clamp(0.0, 1.0);
+        let y = self.y.clamp(0.0, 1.0);
+        let w = self.w.clamp(0.0, 1.0 - x);
+        let h = self.h.clamp(0.0, 1.0 - y);
+        (x, y, w, h)
+    }
+
+    /// Polygon vertices relative to the bounding box (0..1), as Ren'Py needs
+    /// them for the `focus_mask` callable.
+    pub fn local_points(&self) -> Vec<(f32, f32)> {
+        let (bx, by, bw, bh) = self.bounds();
+        let sx = if bw > 0.0 { bw } else { 1.0 };
+        let sy = if bh > 0.0 { bh } else { 1.0 };
+        self.points
+            .iter()
+            .filter(|point| point.len() >= 2)
+            .map(|point| ((point[0] - bx) / sx, (point[1] - by) / sy))
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
