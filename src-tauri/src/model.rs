@@ -560,6 +560,10 @@ pub struct PointClickParams {
     /// Optional line of text at the top of the screen.
     pub prompt: LocalizedText,
     pub hotspots: Vec<Hotspot>,
+    /// Played when the cursor enters a zone.
+    pub hover_sound: Option<String>,
+    /// Played when a zone is clicked.
+    pub click_sound: Option<String>,
 }
 
 /// One clickable zone. All coordinates are normalized to the screen (0..1), so
@@ -679,8 +683,108 @@ impl Default for MainMenuConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct UiConfig {
     pub main_menu: MainMenuConfig,
+    /// Visual theme: resolution, palette, fonts, backgrounds, size scale.
+    pub theme: ThemeConfig,
+    /// Project-wide options normally edited in `options.rpy`.
+    pub options: ProjectOptions,
     /// Extra screens built in the visual builder.
     pub screens: Vec<ScreenDef>,
+}
+
+/// Mirrors the values a novel usually edits in `gui.rpy` by hand.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ThemeConfig {
+    /// When false the studio generates nothing and the project's gui.rpy wins.
+    pub enabled: bool,
+    pub width: u32,
+    pub height: u32,
+    pub accent_color: String,
+    pub idle_color: String,
+    pub hover_color: String,
+    pub text_color: String,
+    pub interface_text_color: String,
+    pub selected_color: String,
+    pub muted_color: String,
+    pub text_font: Option<String>,
+    pub name_font: Option<String>,
+    pub interface_font: Option<String>,
+    pub main_menu_background: Option<String>,
+    pub game_menu_background: Option<String>,
+    /// Overrides in base 1280×720 units; `None` keeps the template value.
+    pub textbox_height: Option<f32>,
+    pub dialogue_width: Option<f32>,
+    pub file_slot_cols: u32,
+    pub file_slot_rows: u32,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        ThemeConfig {
+            enabled: false,
+            width: 1280,
+            height: 720,
+            accent_color: "#00b8c3".into(),
+            idle_color: "#888888".into(),
+            hover_color: "#00b8c3".into(),
+            text_color: "#ffffff".into(),
+            interface_text_color: "#ffffff".into(),
+            selected_color: "#ffffff".into(),
+            muted_color: "#aaaaaa".into(),
+            text_font: None,
+            name_font: None,
+            interface_font: None,
+            main_menu_background: None,
+            game_menu_background: None,
+            textbox_height: None,
+            dialogue_width: None,
+            file_slot_cols: 3,
+            file_slot_rows: 2,
+        }
+    }
+}
+
+/// Values usually written in `options.rpy`.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectOptions {
+    pub enabled: bool,
+    pub config_name: String,
+    pub version: String,
+    pub window_icon: Option<String>,
+    pub enter_transition: Option<String>,
+    pub exit_transition: Option<String>,
+    pub int_transition: Option<String>,
+    pub after_load_transition: Option<String>,
+    pub end_game_transition: Option<String>,
+    pub rollback_enabled: bool,
+    pub allow_skipping: bool,
+    pub has_sound: bool,
+    pub has_music: bool,
+    pub has_voice: bool,
+    pub save_directory: Option<String>,
+}
+
+impl Default for ProjectOptions {
+    fn default() -> Self {
+        ProjectOptions {
+            enabled: false,
+            config_name: String::new(),
+            version: String::new(),
+            window_icon: None,
+            enter_transition: None,
+            exit_transition: None,
+            int_transition: None,
+            after_load_transition: None,
+            end_game_transition: None,
+            rollback_enabled: true,
+            allow_skipping: true,
+            has_sound: true,
+            has_music: true,
+            has_voice: true,
+            save_directory: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -691,19 +795,38 @@ pub struct ScreenDef {
     pub template: String,
     pub title: LocalizedText,
     pub elements: Vec<ScreenElement>,
+    /// Optional full-screen background image (`images/…`).
+    pub background: Option<String>,
+    /// Solid colour drawn under the background image.
+    pub background_color: String,
+    /// Blocks clicks behind the screen (menus want this).
+    pub modal: bool,
+    /// Adds `tag menu`, so the screen behaves like a game-menu page.
+    pub tag_menu: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ScreenElement {
     pub id: String,
-    /// text | button | image | vbox | hbox | frame | spacer
+    /// text | button | image
     pub kind: String,
     pub text: LocalizedText,
     pub image: Option<String>,
+    /// jump | return | start | load | save | preferences | about | quit | show | hide | none
     pub action: Option<String>,
+    /// Scene id, label or screen name, depending on the action.
+    pub target: Option<String>,
+    /// Normalized position/size (0..1). A zero width/height means "natural size".
     pub x: f32,
     pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Font size in 1280×720 units; the generator scales it with the project resolution.
+    pub font_size: u32,
+    pub color: Option<String>,
+    /// left | center | right
+    pub align: String,
     pub style: String,
 }
 

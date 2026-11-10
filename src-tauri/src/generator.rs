@@ -759,6 +759,30 @@ init python:
     }
 
     // ------------------------------------------------------------------
+    // Theme (gui.rpy values, applied after the template but before styles)
+    // ------------------------------------------------------------------
+    if project.ui.theme.enabled {
+        let theme = build_theme(project);
+        out.files.push(GeneratedFile {
+            path: "game/zz_theme.rpy".into(),
+            hash: hash(&theme),
+            content: theme,
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Project options (options.rpy values)
+    // ------------------------------------------------------------------
+    if project.ui.options.enabled {
+        let options = build_options(project);
+        out.files.push(GeneratedFile {
+            path: "game/zz_options.rpy".into(),
+            hash: hash(&options),
+            content: options,
+        });
+    }
+
+    // ------------------------------------------------------------------
     // Extra screens from the visual builder
     // ------------------------------------------------------------------
     if !project.ui.screens.is_empty() {
@@ -766,32 +790,117 @@ init python:
         let _ = writeln!(file, "# ═══════════════════════════════════════════════");
         let _ = writeln!(file, "# ЭКРАНЫ СТУДИИ");
         let _ = writeln!(file, "# Файл сгенерирован RenPy Studio {GENERATOR_VERSION}.");
+        let _ = writeln!(
+            file,
+            "# Экраны собраны в конструкторе: фон + тексты/кнопки/картинки."
+        );
         let _ = writeln!(file, "# ═══════════════════════════════════════════════");
         file.push('\n');
+        let mut used: HashSet<String> = HashSet::new();
         for screen in &project.ui.screens {
             let name = slugify(&screen.name);
+            if name == "item" || name.trim().is_empty() {
+                warnings.push(format!(
+                    "Экран «{}» пропущен: не задано имя.",
+                    pick_locale(&screen.title, &opts.locale, &fallback)
+                ));
+                continue;
+            }
+            if !used.insert(name.clone()) {
+                warnings.push(format!("Экран {name} объявлен дважды — оставлен первый."));
+                continue;
+            }
             let _ = writeln!(file, "screen {name}():");
-            file.push_str("    tag menu\n\n");
-            file.push_str("    add Solid(\"#0b0a12\")\n");
-            file.push_str("    vbox:\n        xalign 0.5\n        yalign 0.5\n        spacing 12\n");
+            if screen.modal {
+                file.push_str("    modal True\n");
+            }
+            if screen.tag_menu {
+                file.push_str("    tag menu\n");
+            }
+            if !screen.background_color.trim().is_empty() {
+                let _ = writeln!(file, "    add Solid({})", rpy_string(&screen.background_color));
+            }
+            if let Some(bg) = screen.background.as_deref().filter(|bg| !bg.trim().is_empty()) {
+                let _ = writeln!(file, "    add {}", rpy_string(bg));
+            }
+            if screen.elements.is_empty() {
+                file.push_str("    # Пока пусто: добавьте элементы в конструкторе.\n");
+            }
             for el in &screen.elements {
-                let text = pick_locale(&el.text, &opts.locale, &fallback);
                 match el.kind.as_str() {
                     "text" => {
-                        let _ = writeln!(file, "        text {} size 30", rpy_text(text, false));
+                        let text = pick_locale(&el.text, &opts.locale, &fallback);
+                        let mut line = format!(
+                            "    text {} xpos {:.3} ypos {:.3}",
+                            rpy_text(text, false),
+                            el.x,
+                            el.y
+                        );
+                        let size = if el.font_size == 0 { 30 } else { el.font_size };
+                        line.push_str(&format!(" size {}", scale_theme(project, size as f32)));
+                        if let Some(color) = el.color.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+                            line.push_str(&format!(" color {}", rpy_string(color)));
+                        }
+                        if el.w > 0.0 {
+                            line.push_str(&format!(
+                                " xmaximum {}",
+                                (el.w * project.ui.theme.width.max(320) as f32) as i32
+                            ));
+                        }
+                        let align = match el.align.as_str() {
+                            "center" => "0.5",
+                            "right" => "1.0",
+                            _ => "0.0",
+                        };
+                        line.push_str(&format!(" text_align {align}"));
+                        let _ = writeln!(file, "{line}");
                     }
                     "image" => {
-                        if let Some(img) = &el.image {
-                            let _ = writeln!(file, "        add {} xalign 0.5", rpy_string(img));
+                        if let Some(img) = el.image.as_deref().filter(|img| !img.trim().is_empty()) {
+                            let mut line = format!(
+                                "    add {} xpos {:.3} ypos {:.3}",
+                                rpy_string(img),
+                                el.x,
+                                el.y
+                            );
+                            if el.w > 0.0 && el.h > 0.0 {
+                                line.push_str(&format!(
+                                    " xysize ({}, {})",
+                                    (el.w * project.ui.theme.width.max(320) as f32) as i32,
+                                    (el.h * project.ui.theme.height.max(240) as f32) as i32
+                                ));
+                            }
+                            let _ = writeln!(file, "{line}");
                         }
                     }
                     _ => {
-                        let label = if text.is_empty() { "..." } else { text };
-                        let _ = writeln!(
-                            file,
-                            "        textbutton {} action Return()",
-                            rpy_text(label, false)
+                        let label = pick_locale(&el.text, &opts.locale, &fallback);
+                        let label = if label.is_empty() {
+                            "…".to_string()
+                        } else {
+                            label.to_string()
+                        };
+                        let action = screen_action(el, &labels);
+                        let mut line = format!(
+                            "    textbutton {} action {} xpos {:.3} ypos {:.3}",
+                            rpy_text(&label, false),
+                            action,
+                            el.x,
+                            el.y
                         );
+                        if el.w > 0.0 && el.h > 0.0 {
+                            line.push_str(&format!(
+                                " xysize ({}, {})",
+                                (el.w * project.ui.theme.width.max(320) as f32) as i32,
+                                (el.h * project.ui.theme.height.max(240) as f32) as i32
+                            ));
+                        }
+                        let size = if el.font_size == 0 { 30 } else { el.font_size };
+                        line.push_str(&format!(" text_size {}", scale_theme(project, size as f32)));
+                        if let Some(color) = el.color.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+                            line.push_str(&format!(" text_color {}", rpy_string(color)));
+                        }
+                        let _ = writeln!(file, "{line}");
                     }
                 }
             }
@@ -810,6 +919,221 @@ init python:
     // Stable order keeps the manifest diffable.
     out.files.sort_by(|a, b| a.path.cmp(&b.path));
     out
+}
+
+/// Sizes copied from the SDK template (1280×720 base); `gui.scale()` recomputes
+/// them for the project resolution.
+const THEME_SIZES: [(&str, f32); 21] = [
+    ("text_size", 30.0),
+    ("name_text_size", 36.0),
+    ("notify_text_size", 25.0),
+    ("interface_text_size", 30.0),
+    ("button_text_size", 30.0),
+    ("label_text_size", 34.0),
+    ("textbox_height", 240.0),
+    ("name_xpos", 80.0),
+    ("dialogue_xpos", 90.0),
+    ("dialogue_width", 1100.0),
+    ("slider_size", 36.0),
+    ("choice_button_width", 1240.0),
+    ("choice_button_text_size", 30.0),
+    ("navigation_spacing", 20.0),
+    ("pref_button_spacing", 10.0),
+    ("history_height", 190.0),
+    ("history_text_width", 690.0),
+    ("quick_button_text_size", 20.0),
+    ("nvl_height", 170.0),
+    ("nvl_text_width", 915.0),
+    ("nvl_button_width", 1240.0),
+];
+
+fn scale_theme(project: &Project, value: f32) -> i32 {
+    let width = if project.ui.theme.width > 0 {
+        project.ui.theme.width
+    } else {
+        1280
+    } as f32;
+    (value * width / 1280.0).round().max(1.0) as i32
+}
+
+/// `gui.rpy` is a template with `init offset = -2`; writing at -1 overrides its
+/// values before any screen style is built, without touching the template file.
+fn build_theme(project: &Project) -> String {
+    let theme = &project.ui.theme;
+    let mut s = String::new();
+    let _ = writeln!(s, "# ═══════════════════════════════════════════════");
+    let _ = writeln!(s, "# ТЕМА ОФОРМЛЕНИЯ");
+    let _ = writeln!(s, "# Файл сгенерирован RenPy Studio {GENERATOR_VERSION}.");
+    let _ = writeln!(
+        s,
+        "# Значения применяются после gui.rpy (init -1) и до сборки стилей."
+    );
+    let _ = writeln!(s, "# Правки в этом файле перезапишутся при экспорте.");
+    let _ = writeln!(s, "# ═══════════════════════════════════════════════");
+    s.push('\n');
+    s.push_str("init offset = -1\n\ninit python:\n");
+    let _ = writeln!(
+        s,
+        "    # Разрешение проекта и пересчёт gui.scale() для всех размеров.\n    gui.init({}, {})",
+        theme.width.max(320),
+        theme.height.max(240)
+    );
+    s.push_str("\n    # Палитра\n");
+    let colors = [
+        ("accent_color", &theme.accent_color),
+        ("idle_color", &theme.idle_color),
+        ("idle_small_color", &theme.muted_color),
+        ("hover_color", &theme.hover_color),
+        ("text_color", &theme.text_color),
+        ("interface_text_color", &theme.interface_text_color),
+        ("selected_color", &theme.selected_color),
+    ];
+    for (name, value) in colors {
+        if !value.trim().is_empty() {
+            let _ = writeln!(s, "    gui.{name} = {}", rpy_string(value));
+        }
+    }
+    if theme.text_font.as_deref().map(|f| !f.trim().is_empty()).unwrap_or(false)
+        || theme.name_font.as_deref().map(|f| !f.trim().is_empty()).unwrap_or(false)
+        || theme.interface_font.as_deref().map(|f| !f.trim().is_empty()).unwrap_or(false)
+    {
+        s.push_str("\n    # Шрифты (пути относительно game/ или системное имя)\n");
+        if let Some(font) = theme.text_font.as_deref().filter(|f| !f.trim().is_empty()) {
+            let _ = writeln!(s, "    gui.text_font = {}", rpy_string(font));
+        }
+        if let Some(font) = theme.name_font.as_deref().filter(|f| !f.trim().is_empty()) {
+            let _ = writeln!(s, "    gui.name_text_font = {}", rpy_string(font));
+        }
+        if let Some(font) = theme.interface_font.as_deref().filter(|f| !f.trim().is_empty()) {
+            let _ = writeln!(s, "    gui.interface_text_font = {}", rpy_string(font));
+        }
+    }
+    if theme
+        .main_menu_background
+        .as_deref()
+        .map(|bg| !bg.trim().is_empty())
+        .unwrap_or(false)
+        || theme
+            .game_menu_background
+            .as_deref()
+            .map(|bg| !bg.trim().is_empty())
+            .unwrap_or(false)
+    {
+        s.push_str("\n    # Фоны меню\n");
+        if let Some(bg) = theme
+            .main_menu_background
+            .as_deref()
+            .filter(|bg| !bg.trim().is_empty())
+        {
+            let _ = writeln!(s, "    gui.main_menu_background = {}", rpy_string(bg));
+        }
+        if let Some(bg) = theme
+            .game_menu_background
+            .as_deref()
+            .filter(|bg| !bg.trim().is_empty())
+        {
+            let _ = writeln!(s, "    gui.game_menu_background = {}", rpy_string(bg));
+        }
+    }
+    s.push_str("\n    # Размеры: базовые значения 1280×720, пересчитаны под разрешение\n");
+    for (name, base) in THEME_SIZES {
+        let value = match name {
+            "textbox_height" => theme.textbox_height.unwrap_or(base),
+            "dialogue_width" => theme.dialogue_width.unwrap_or(base),
+            _ => base,
+        };
+        let _ = writeln!(s, "    gui.{name} = gui.scale({})", value.round() as i32);
+    }
+    let _ = writeln!(
+        s,
+        "\n    # Сетка сохранений\n    gui.file_slot_cols = {}\n    gui.file_slot_rows = {}",
+        theme.file_slot_cols.clamp(1, 6),
+        theme.file_slot_rows.clamp(1, 6)
+    );
+    s
+}
+
+/// Values that live in `options.rpy`; applied late so they win over the template.
+fn build_options(project: &Project) -> String {
+    let options = &project.ui.options;
+    let mut s = String::new();
+    let _ = writeln!(s, "# ═══════════════════════════════════════════════");
+    let _ = writeln!(s, "# ОПЦИИ ПРОЕКТА");
+    let _ = writeln!(s, "# Файл сгенерирован RenPy Studio {GENERATOR_VERSION}.");
+    let _ = writeln!(
+        s,
+        "# Значения из панели «GUI → Опции проекта». Перекрывают options.rpy."
+    );
+    let _ = writeln!(s, "# ═══════════════════════════════════════════════");
+    s.push('\n');
+    s.push_str("init offset = 100\n\ninit python:\n");
+    if !options.config_name.trim().is_empty() {
+        let _ = writeln!(s, "    config.name = {}", rpy_string(options.config_name.trim()));
+    }
+    if !options.version.trim().is_empty() {
+        let _ = writeln!(s, "    config.version = {}", rpy_string(options.version.trim()));
+    }
+    if let Some(icon) = options.window_icon.as_deref().filter(|icon| !icon.trim().is_empty()) {
+        let _ = writeln!(s, "    config.window_icon = {}", rpy_string(icon));
+    }
+    if let Some(dir) = options.save_directory.as_deref().filter(|dir| !dir.trim().is_empty()) {
+        let _ = writeln!(s, "    config.save_directory = {}", rpy_string(dir.trim()));
+    }
+    let transitions = [
+        ("enter_transition", &options.enter_transition),
+        ("exit_transition", &options.exit_transition),
+        ("int_transition", &options.int_transition),
+        ("after_load_transition", &options.after_load_transition),
+        ("end_game_transition", &options.end_game_transition),
+    ];
+    for (field, value) in transitions {
+        let Some(name) = value.as_deref().map(str::trim).filter(|name| !name.is_empty()) else {
+            continue;
+        };
+        if name == "none" {
+            let _ = writeln!(s, "    config.{field} = None");
+            continue;
+        }
+        if name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            let _ = writeln!(s, "    config.{field} = {name}");
+        } else {
+            let _ = writeln!(s, "    # config.{field}: неподдерживаемое имя перехода «{name}»");
+        }
+    }
+    let _ = writeln!(s, "    config.has_sound = {}", py_bool(options.has_sound));
+    let _ = writeln!(s, "    config.has_music = {}", py_bool(options.has_music));
+    let _ = writeln!(s, "    config.has_voice = {}", py_bool(options.has_voice));
+    let _ = writeln!(s, "    config.rollback_enabled = {}", py_bool(options.rollback_enabled));
+    let _ = writeln!(s, "    config.allow_skipping = {}", py_bool(options.allow_skipping));
+    s
+}
+
+fn py_bool(value: bool) -> &'static str {
+    if value {
+        "True"
+    } else {
+        "False"
+    }
+}
+
+fn screen_action(el: &ScreenElement, labels: &SceneLabels) -> String {
+    let target = el.target.as_deref().unwrap_or("").trim();
+    match el.action.as_deref().unwrap_or("none") {
+        "jump" if !target.is_empty() => format!(
+            "Jump({})",
+            rpy_string(&label_or_raw(&resolve_target(target, labels)))
+        ),
+        "start" => "Start()".into(),
+        "load" => "ShowMenu(\"load\")".into(),
+        "save" => "ShowMenu(\"save\")".into(),
+        "preferences" => "ShowMenu(\"preferences\")".into(),
+        "about" => "ShowMenu(\"about\")".into(),
+        "quit" => "Quit(confirm=False)".into(),
+        "show" if !target.is_empty() => format!("Show({})", rpy_string(&slugify(target))),
+        "hide" if !target.is_empty() => format!("Hide({})", rpy_string(&slugify(target))),
+        "return" => "Return()".into(),
+        _ => "NullAction()".into(),
+    }
 }
 
 fn build_main_menu(project: &Project, opts: &GenOptions, fallback: &str) -> String {
@@ -1513,6 +1837,22 @@ fn pointclick_screen(
             push(2, format!("focus_mask _StudioHit([{points}])"));
         }
         push(2, "hover_background Solid(\"#ffffff12\")".into());
+        if let Some(sound) = p
+            .hover_sound
+            .as_deref()
+            .map(str::trim)
+            .filter(|sound| !sound.is_empty())
+        {
+            push(2, format!("hover_sound {}", rpy_string(&asset_rel(sound))));
+        }
+        if let Some(sound) = p
+            .click_sound
+            .as_deref()
+            .map(str::trim)
+            .filter(|sound| !sound.is_empty())
+        {
+            push(2, format!("activate_sound {}", rpy_string(&asset_rel(sound))));
+        }
     }
 
     push(1, "".into());
@@ -1860,6 +2200,114 @@ mod tests {
             .find(|f| f.path == "game/script_prologue.rpy")
             .expect("scene file");
         assert!(script.content.contains("scene bg room"));
+    }
+
+    #[test]
+    fn theme_overrides_gui_after_template() {
+        let mut project = sample_project();
+        project.ui.theme.enabled = true;
+        project.ui.theme.width = 1920;
+        project.ui.theme.height = 1080;
+        project.ui.theme.accent_color = "#be83cf".into();
+        project.ui.theme.text_font = Some("Underdog-Regular.ttf".into());
+        project.ui.theme.main_menu_background = Some("main_menu_bg".into());
+        project.ui.theme.file_slot_cols = 3;
+        let bundle = generate(&project, &GenOptions::default());
+        let theme = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/zz_theme.rpy")
+            .expect("theme file");
+        assert!(theme.content.contains("init offset = -1"));
+        assert!(theme.content.contains("gui.init(1920, 1080)"));
+        assert!(theme.content.contains("gui.accent_color = \"#be83cf\""));
+        assert!(theme.content.contains("gui.text_size = gui.scale(30)"));
+        assert!(theme.content.contains("gui.text_font = \"Underdog-Regular.ttf\""));
+        assert!(theme.content.contains("gui.main_menu_background = \"main_menu_bg\""));
+        assert!(theme.content.contains("gui.file_slot_cols = 3"));
+    }
+
+    #[test]
+    fn options_override_config_values() {
+        let mut project = sample_project();
+        project.ui.options.enabled = true;
+        project.ui.options.config_name = "Тёмные фрагменты".into();
+        project.ui.options.version = "1.2".into();
+        project.ui.options.enter_transition = Some("dissolve".into());
+        project.ui.options.has_voice = false;
+        let bundle = generate(&project, &GenOptions::default());
+        let options = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/zz_options.rpy")
+            .expect("options file");
+        assert!(options.content.contains("config.name = \"Тёмные фрагменты\""));
+        assert!(options.content.contains("config.version = \"1.2\""));
+        assert!(options.content.contains("config.enter_transition = dissolve"));
+        assert!(options.content.contains("config.has_voice = False"));
+    }
+
+    #[test]
+    fn custom_screen_gets_background_and_actions() {
+        let mut project = sample_project();
+        project.ui.screens.push(ScreenDef {
+            id: "scr_1".into(),
+            name: "choose_person".into(),
+            template: "blank".into(),
+            title: [("ru".to_string(), "Кто это?".to_string())].into_iter().collect(),
+            background: Some("images/bg/persons.png".into()),
+            background_color: "#101018".into(),
+            modal: true,
+            tag_menu: false,
+            elements: vec![
+                ScreenElement {
+                    id: "el_1".into(),
+                    kind: "text".into(),
+                    text: [("ru".to_string(), "Кто это?".to_string())].into_iter().collect(),
+                    x: 0.5,
+                    y: 0.1,
+                    w: 0.6,
+                    font_size: 40,
+                    align: "center".into(),
+                    ..ScreenElement::default()
+                },
+                ScreenElement {
+                    id: "el_2".into(),
+                    kind: "button".into(),
+                    text: [("ru".to_string(), "Мира".to_string())].into_iter().collect(),
+                    action: Some("jump".into()),
+                    target: Some("sc_b".into()),
+                    x: 0.1,
+                    y: 0.6,
+                    w: 0.2,
+                    h: 0.08,
+                    font_size: 30,
+                    ..ScreenElement::default()
+                },
+                ScreenElement {
+                    id: "el_3".into(),
+                    kind: "button".into(),
+                    text: [("ru".to_string(), "Назад".to_string())].into_iter().collect(),
+                    action: Some("return".into()),
+                    x: 0.1,
+                    y: 0.8,
+                    ..ScreenElement::default()
+                },
+            ],
+        });
+        let bundle = generate(&project, &GenOptions::default());
+        let screens = bundle
+            .files
+            .iter()
+            .find(|f| f.path == "game/screens_builder.rpy")
+            .expect("screens file");
+        assert!(screens.content.contains("screen choose_person():"));
+        assert!(screens.content.contains("modal True"));
+        assert!(screens.content.contains("add Solid(\"#101018\")"));
+        assert!(screens.content.contains("add \"images/bg/persons.png\""));
+        assert!(screens.content.contains("textbutton \"Мира\" action Jump(\"scene_door\")"));
+        assert!(screens.content.contains("action Return()"));
+        assert!(screens.content.contains("xysize ("));
     }
 
     #[test]

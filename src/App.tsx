@@ -218,7 +218,7 @@ export default function App() {
                 {tab === "plugins" ? <PluginsTab /> : null}
               </div>
             </main>
-            <Inspector />
+            {tab === "screens" ? null : <Inspector />}
             <AiPanel />
           </>
         ) : (

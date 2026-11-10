@@ -208,7 +208,7 @@ let aiSeq = 1;
 const errText = (error: unknown): string =>
   typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
 
-const ALLOWED_ACTIONS = new Set(["add_scene", "add_block", "set_start_scene"]);
+const ALLOWED_ACTIONS = new Set(["add_scene", "add_block", "update_block", "delete_block", "set_start_scene"]);
 
 /**
  * The assistant may end a reply with a fenced JSON block of proposed changes.
@@ -230,6 +230,17 @@ function extractActions(content: string): { content: string; actions: AiAction[]
         if (typeof action.type !== "string" || !ALLOWED_ACTIONS.has(action.type)) return false;
         if (action.type === "add_block") {
           return typeof action.sceneId === "string" && typeof action.kind === "string";
+        }
+        if (action.type === "update_block") {
+          return (
+            typeof action.sceneId === "string" &&
+            typeof action.nodeId === "string" &&
+            typeof action.params === "object" &&
+            action.params !== null
+          );
+        }
+        if (action.type === "delete_block") {
+          return typeof action.sceneId === "string" && typeof action.nodeId === "string";
         }
         if (action.type === "add_scene") return typeof action.title === "string";
         return typeof action.sceneId === "string";
@@ -534,6 +545,15 @@ export const useStudio = create<StudioState>((set, get) => {
             if (inserted) {
               set({ activeSceneId: sceneId, selectedNodeId: inserted.id, tab: "scene" });
             }
+            applied += 1;
+          } else if (action.type === "update_block" && action.sceneId && action.nodeId) {
+            const env = await api.updateNode(action.sceneId, action.nodeId, action.params ?? {});
+            applyEnvelope(env);
+            set({ activeSceneId: action.sceneId, selectedNodeId: action.nodeId, tab: "scene" });
+            applied += 1;
+          } else if (action.type === "delete_block" && action.sceneId && action.nodeId) {
+            const env = await api.deleteNode(action.sceneId, action.nodeId);
+            applyEnvelope(env);
             applied += 1;
           } else if (action.type === "set_start_scene" && action.sceneId) {
             const env = await api.setStartScene(action.sceneId);

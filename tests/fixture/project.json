@@ -118,7 +118,7 @@
       "color": null,
       "nodes": [
         { "id": "n_street_bg", "kind": "scene", "params": { "bg": "images/bg/street.png", "transition": "fade", "duration": 0.8 }, "source": "studio", "locked": false },
-        { "id": "nd_pc_1", "kind": "pointclick", "params": { "bg": "images/bg/room.png", "prompt": { "ru": "Куда пойти?", "en": "Where to?" }, "hotspots": [ { "id": "hs_door", "label": { "ru": "Дверь", "en": "Door" }, "shape": "rect", "x": 0.62, "y": 0.26, "w": 0.22, "h": 0.46, "points": [], "action": "jump", "target": "sc_ending" }, { "id": "hs_window", "label": { "ru": "Окно", "en": "Window" }, "shape": "polygon", "x": 0.1, "y": 0.18, "w": 0.3, "h": 0.34, "points": [[0.12, 0.22], [0.38, 0.18], [0.4, 0.46], [0.14, 0.5]], "action": "tooltip", "target": null } ] }, "source": "studio", "locked": false },
+        { "id": "nd_pc_1", "kind": "pointclick", "params": { "hoverSound": "audio/theme.opus", "clickSound": "audio/theme.opus", "bg": "images/bg/room.png", "prompt": { "ru": "Куда пойти?", "en": "Where to?" }, "hotspots": [ { "id": "hs_door", "label": { "ru": "Дверь", "en": "Door" }, "shape": "rect", "x": 0.62, "y": 0.26, "w": 0.22, "h": 0.46, "points": [], "action": "jump", "target": "sc_ending" }, { "id": "hs_window", "label": { "ru": "Окно", "en": "Window" }, "shape": "polygon", "x": 0.1, "y": 0.18, "w": 0.3, "h": 0.34, "points": [[0.12, 0.22], [0.38, 0.18], [0.4, 0.46], [0.14, 0.5]], "action": "tooltip", "target": null } ] }, "source": "studio", "locked": false },
         { "id": "n_street_hide", "kind": "hide", "params": { "who": "ch_mira", "image": null, "transition": "dissolve" }, "source": "studio", "locked": false },
         { "id": "n_street_code", "kind": "code", "params": { "code": "$ renpy.notify(\"Глава 1 завершена\")", "language": "renpy" }, "source": "studio", "locked": false },
         { "id": "n_street_label", "kind": "label", "params": { "name": "street_end" }, "source": "studio", "locked": false },
@@ -141,6 +141,44 @@
   ],
   "initScript": "transform studio_test_pulse:\n    ease 0.5 zoom 1.02\n    ease 0.5 zoom 1.0",
   "ui": {
+    "theme": {
+      "enabled": true,
+      "width": 1920,
+      "height": 1080,
+      "accentColor": "#be83cf",
+      "idleColor": "#c9c9c9",
+      "hoverColor": "#ffffff",
+      "textColor": "#ffffff",
+      "interfaceTextColor": "#ffffff",
+      "selectedColor": "#ffffff",
+      "mutedColor": "#aaaaaa",
+      "textFont": null,
+      "nameFont": null,
+      "interfaceFont": null,
+      "mainMenuBackground": null,
+      "gameMenuBackground": null,
+      "textboxHeight": null,
+      "dialogueWidth": null,
+      "fileSlotCols": 3,
+      "fileSlotRows": 2
+    },
+    "options": {
+      "enabled": true,
+      "configName": "Тестовая новелла",
+      "version": "1.0",
+      "windowIcon": null,
+      "enterTransition": "dissolve",
+      "exitTransition": null,
+      "intTransition": null,
+      "afterLoadTransition": null,
+      "endGameTransition": null,
+      "rollbackEnabled": true,
+      "allowSkipping": true,
+      "hasSound": true,
+      "hasMusic": true,
+      "hasVoice": true,
+      "saveDirectory": null
+    },
     "mainMenu": {
       "template": "aurora",
       "background": "images/bg/menu.png",
@@ -157,6 +195,79 @@
       "showQuit": true,
       "buttonAlign": "center"
     },
-    "screens": []
+    "screens": [
+      {
+        "id": "scr_persons",
+        "name": "choose_person",
+        "template": "blank",
+        "title": {
+          "ru": "Кто это?",
+          "en": "Who is this?"
+        },
+        "elements": [
+          {
+            "id": "el_title",
+            "kind": "text",
+            "text": {
+              "ru": "Кто это?",
+              "en": "Who is this?"
+            },
+            "image": null,
+            "action": null,
+            "target": null,
+            "x": 0.08,
+            "y": 0.1,
+            "w": 0.6,
+            "h": 0,
+            "fontSize": 44,
+            "color": "#ffffff",
+            "align": "left",
+            "style": ""
+          },
+          {
+            "id": "el_mira",
+            "kind": "button",
+            "text": {
+              "ru": "Мира",
+              "en": "Mira"
+            },
+            "image": null,
+            "action": "jump",
+            "target": "sc_door",
+            "x": 0.08,
+            "y": 0.5,
+            "w": 0.22,
+            "h": 0.08,
+            "fontSize": 26,
+            "color": "#ffffff",
+            "align": "left",
+            "style": ""
+          },
+          {
+            "id": "el_back",
+            "kind": "button",
+            "text": {
+              "ru": "Назад",
+              "en": "Back"
+            },
+            "image": null,
+            "action": "return",
+            "target": null,
+            "x": 0.08,
+            "y": 0.62,
+            "w": 0.22,
+            "h": 0.08,
+            "fontSize": 26,
+            "color": "#ffffff",
+            "align": "left",
+            "style": ""
+          }
+        ],
+        "background": "images/bg/room.png",
+        "backgroundColor": "#101018",
+        "modal": true,
+        "tagMenu": false
+      }
+    ]
   }
 }

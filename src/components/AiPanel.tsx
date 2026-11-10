@@ -246,6 +246,10 @@ function describeAction(
         kind: action.kind ?? "",
         scene: sceneTitle(action.sceneId),
       });
+    case "update_block":
+      return t("ai.action.updateBlock", { scene: sceneTitle(action.sceneId) });
+    case "delete_block":
+      return t("ai.action.deleteBlock", { scene: sceneTitle(action.sceneId) });
     case "set_start_scene":
       return t("ai.action.setStart", { scene: sceneTitle(action.sceneId) });
     default:

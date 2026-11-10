@@ -248,7 +248,9 @@ pub fn default_params(project: &Project, kind: &str) -> Value {
         NodeKind::POINTCLICK => json!({
             "bg": "",
             "prompt": default_locale_text(project, ""),
-            "hotspots": []
+            "hotspots": [],
+            "hoverSound": null,
+            "clickSound": null
         }),
         _ => json!({}),
     }

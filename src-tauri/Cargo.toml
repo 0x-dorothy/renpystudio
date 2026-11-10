@@ -1,6 +1,6 @@
 [package]
 name = "renpy-studio"
-version = "0.2.1"
+version = "0.3.0"
 description = "Visual no-code IDE for Ren'Py visual novels"
 authors = ["RenPy Studio"]
 edition = "2021"

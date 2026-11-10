@@ -81,12 +81,18 @@ export interface MainMenuConfig extends MenuButtonFlags {
 
 export interface ScreenElement {
   id: string;
-  kind: string;
+  kind: "text" | "button" | "image";
   text: LocalizedText;
   image: string | null;
   action: string | null;
+  target: string | null;
   x: number;
   y: number;
+  w: number;
+  h: number;
+  fontSize: number;
+  color: string | null;
+  align: "left" | "center" | "right";
   style: string;
 }
 
@@ -96,11 +102,59 @@ export interface ScreenDef {
   template: string;
   title: LocalizedText;
   elements: ScreenElement[];
+  background: string | null;
+  backgroundColor: string;
+  modal: boolean;
+  tagMenu: boolean;
 }
 
 export interface UiConfig {
   mainMenu: MainMenuConfig;
+  theme: ThemeConfig;
+  options: ProjectOptions;
   screens: ScreenDef[];
+}
+
+/** Mirrors `gui.rpy` values: resolution, palette, fonts, backgrounds, sizes. */
+export interface ThemeConfig {
+  enabled: boolean;
+  width: number;
+  height: number;
+  accentColor: string;
+  idleColor: string;
+  hoverColor: string;
+  textColor: string;
+  interfaceTextColor: string;
+  selectedColor: string;
+  mutedColor: string;
+  textFont?: string | null;
+  nameFont?: string | null;
+  interfaceFont?: string | null;
+  mainMenuBackground?: string | null;
+  gameMenuBackground?: string | null;
+  textboxHeight?: number | null;
+  dialogueWidth?: number | null;
+  fileSlotCols: number;
+  fileSlotRows: number;
+}
+
+/** Mirrors `options.rpy` values. */
+export interface ProjectOptions {
+  enabled: boolean;
+  configName: string;
+  version: string;
+  windowIcon?: string | null;
+  enterTransition?: string | null;
+  exitTransition?: string | null;
+  intTransition?: string | null;
+  afterLoadTransition?: string | null;
+  endGameTransition?: string | null;
+  rollbackEnabled: boolean;
+  allowSkipping: boolean;
+  hasSound: boolean;
+  hasMusic: boolean;
+  hasVoice: boolean;
+  saveDirectory?: string | null;
 }
 
 export interface Project {
@@ -209,8 +263,9 @@ export interface AiReply {
 
 /** One change the assistant proposes; applied only after the user confirms. */
 export interface AiAction {
-  type: "add_scene" | "add_block" | "set_start_scene" | string;
+  type: "add_scene" | "add_block" | "update_block" | "delete_block" | "set_start_scene" | string;
   sceneId?: string;
+  nodeId?: string;
   title?: string;
   kind?: string;
   params?: Record<string, unknown>;
@@ -379,6 +434,8 @@ export interface PointClickParams {
   bg: string;
   prompt: LocalizedText;
   hotspots: Hotspot[];
+  hoverSound?: string | null;
+  clickSound?: string | null;
 }
 
 /** One clickable zone of a point-and-click block. Coordinates are 0..1. */

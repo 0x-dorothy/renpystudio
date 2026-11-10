@@ -411,8 +411,8 @@ pub fn system_prompt(project: &Project, scene_id: Option<&str>) -> String {
 Доступные блоки:\n{catalog}\n\n\
 Если пользователь просит что-то изменить, в самом конце ответа добавь ровно один блок кода:\n\
 ```json\n{{\"actions\": [{{\"type\": \"add_block\", \"sceneId\": \"…\", \"kind\": \"say\", \"params\": {{\"who\": \"…\", \"text\": {{\"ru\": \"…\"}}}}}}]}}\n```\n\
-Допустимые действия: add_scene {{title}}, add_block {{sceneId, kind, params}}, set_start_scene {{sceneId}}.\n\
-Правила: только существующие sceneId из контекста; kind — из списка блоков; params — валидный объект для блока; не больше 5 действий. Если изменения не нужны — блок не добавляй.\n\n\
+Допустимые действия: add_scene {{title}}, add_block {{sceneId, kind, params}}, update_block {{sceneId, nodeId, params}}, delete_block {{sceneId, nodeId}}, set_start_scene {{sceneId}}.\n\
+Правила: только существующие sceneId и nodeId из контекста; kind — из списка блоков; params — валидный объект для блока; не больше 5 действий. Для update_block передавай ПОЛНЫЙ объект params (он заменит текущие параметры блока). Если изменения не нужны — блок не добавляй.\n\n\
 Контекст проекта:\n{context}",
         catalog = block_catalog(),
         context = project_context(project, scene_id)

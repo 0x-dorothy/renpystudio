@@ -29,6 +29,8 @@ function normalize(params: Record<string, unknown>): PointClickParams {
   return {
     bg: String(params.bg ?? ""),
     prompt: (params.prompt as Record<string, string> | undefined) ?? {},
+    hoverSound: (params.hoverSound as string | null | undefined) ?? null,
+    clickSound: (params.clickSound as string | null | undefined) ?? null,
     hotspots: raw.map((entry) => {
       const points = Array.isArray(entry.points)
         ? (entry.points as unknown[])
@@ -544,6 +546,34 @@ function HotspotEditor({ node }: { node: StudioNode }) {
             }
           />
         </Field>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Field label={t("field.hoverSound")}>
+            <Input
+              className="mono text-[11px]"
+              list="pointclick-audio"
+              value={draft.hoverSound ?? ""}
+              placeholder="audio/hover.ogg"
+              onChange={(event) => setDraft((prev) => ({ ...prev, hoverSound: event.target.value || null }))}
+            />
+          </Field>
+          <Field label={t("field.clickSound")}>
+            <Input
+              className="mono text-[11px]"
+              list="pointclick-audio"
+              value={draft.clickSound ?? ""}
+              placeholder="audio/click.ogg"
+              onChange={(event) => setDraft((prev) => ({ ...prev, clickSound: event.target.value || null }))}
+            />
+          </Field>
+        </div>
+        <datalist id="pointclick-audio">
+          {assets
+            .filter((asset) => asset.kind === "audio")
+            .map((asset) => (
+              <option key={asset.path} value={asset.path} />
+            ))}
+        </datalist>
 
         <div className="mt-1 flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[var(--muted-2)]">
